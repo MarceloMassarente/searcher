@@ -4335,7 +4335,6 @@ SAÍDA (JSON puro):
                 "seed_query",
                 "seed_core",
                 "must_terms",
-                "avoid_terms",
                 "time_hint",
                 "source_bias",
                 "evidence_goal",

@@ -1945,25 +1945,34 @@ async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any],
     base_url = _safe_get_valve(valves, "openai_base_url", "https://api.openai.com/v1")
     
     try:
-        # Detect if Pipe integration needed
-        pipe_must_terms = intent_profile.get("pipe_must_terms", [])
-        use_pipe_integration = bool(pipe_must_terms)
         intent_context_str = json.dumps(intent_profile or {}, ensure_ascii=False, indent=2)
         
-        # Build prompt (similar to v2)
-        base_prompt = f"""Você é um planejador de busca para SearXNG (DISCOVERY de URLs).
-
-SEU PAPEL: Gerar 1-3 queries AMPLAS para maximizar descoberta.
-
-CONTEXTO:
-{intent_context_str}
-
-QUERY DO USUÁRIO:
-{query}
-
-Retorne APENAS JSON válido com: {{"plans": [{{"core_query": "...", "sites": [], "filetypes": [], "suggested_domains": []}}]}}"""
+        # Build comprehensive prompt (from v2)
+        base_prompt_template = (
+            "Você é um estrategista de busca especialista. "
+            "Decomponha a consulta em 1 a 3 planos de busca independentes. "
+            "Cada plano deve cobrir uma faceta diferente, maximizando diversidade e cobertura.\n"
+            "\n"
+            "### [CONTEXTO DA CONSULTA]\n"
+            "{intent_context}\n"
+            "\n"
+            "### [CONSULTA DO USUÁRIO]\n"
+            "<<< {query} >>>\n"
+            "\n"
+            "### [REGRAS PARA GERAÇÃO]\n"
+            "1. `core_query` deve ser pura string de busca (operadores: \"\", site:, filetype:, OR)\n"
+            "2. SEM explicações, numeração ou anotações no `core_query`\n"
+            "3. Máximo 3 planos. Cada um com: core_query (string), sites (list), filetypes (list)\n"
+            "4. Exemplo CORRETO: `\"trade as % GDP\" site:un.org OR site:worldbank.org`\n"
+            "5. Exemplo INCORRETO: `1) \"trade\" \"% GDP\" (objetivo: análise...)`\n"
+            "\n"
+            "### [SCHEMA DE SAÍDA]\n"
+            "{{ \"plans\": [ {{ \"core_query\": \"...\", \"sites\": [], \"filetypes\": [], \"suggested_domains\": [] }} ] }}\n"
+            "\n"
+            "Retorne SOMENTE JSON válido."
+        )
         
-        prompt = base_prompt
+        prompt = base_prompt_template.format(intent_context=intent_context_str, query=query)
         
         # ✅ HYBRID ASYNC: Run sync OpenAI call in thread executor
         def _sync_llm_call():
@@ -1988,27 +1997,37 @@ Retorne APENAS JSON válido com: {{"plans": [{{"core_query": "...", "sites": [],
         
         content = response.choices[0].message.content.strip()
         
-        # Parse response
-        try:
-            parsed = json.loads(content)
-            plans = parsed.get("plans", []) if isinstance(parsed, dict) else []
-            
-            # Normalize plans
-            valid_plans = []
-            for p in plans:
-                if isinstance(p, dict) and "core_query" in p:
-                    valid_plans.append(p)
-            
-            logger.info(f"[LLM Planner] Generated {len(valid_plans)} query plans")
-            return valid_plans if valid_plans else [{
-                "core_query": query,
-                "sites": [],
-                "filetypes": [],
-                "suggested_domains": [],
-            }]
-            
-        except Exception as e:
-            logger.error(f"[LLM Planner] Failed to parse LLM response: {e}")
+        # Parse response with robust JSON handling
+        def _try_parse_json(text: str):
+            if not text:
+                return None
+            try:
+                return json.loads(text)
+            except Exception:
+                m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
+                if m:
+                    try:
+                        return json.loads(m.group(0))
+                    except Exception:
+                        return None
+                return None
+        
+        parsed = content if isinstance(content, dict) else _try_parse_json(content)
+        plans = (parsed.get("plans", []) if isinstance(parsed, dict) else []) or []
+        
+        # Normalize plans to expected format
+        out = []
+        for p in plans:
+            if isinstance(p, str):
+                plan = {"core_query": p, "sites": [], "filetypes": [], "suggested_domains": []}
+            elif isinstance(p, dict) and "core_query" in p:
+                plan = p
+            else:
+                continue
+            out.append(plan)
+        
+        logger.info(f"[LLM Planner] Generated {len(out)} query plans")
+        if not out:
             # Fallback: return simple plan
             return [{
                 "core_query": query,
@@ -2016,7 +2035,10 @@ Retorne APENAS JSON válido com: {{"plans": [{{"core_query": "...", "sites": [],
                 "filetypes": [],
                 "suggested_domains": [],
             }]
-    
+        
+        # Clamp to max 3 plans
+        return out[:3]
+        
     except Exception as e:
         logger.error(f"[LLM Planner] Error: {e}")
         # Always return something usable

@@ -3927,25 +3927,22 @@ async def discover_urls(
         
         unique_candidates = interleaved_results
         
-        # Apply enable_domain_diversity (pre-LLM diversity enforcement)
-        # enable_domain_diversity is boolean: True = use max_urls_per_domain value, False = disabled
-        domain_diversity_enabled = _safe_get_valve(current_valves, "enable_domain_diversity", True)
+        # ✅ MELHORIA: Domain diversity foi REMOVIDO daqui (pré-LLM)
+        # Motivo: Era muito agressivo (283→200→70), perdendo candidatos antes do LLM analisar
+        # Solução: Deixar LLM analisar mais candidatos semanticamente, rails pós-LLM aplicam diversidade se necessário
+        # 
+        # Fluxo novo:
+        # 1. [Zipper] 283 → 200 (limite global OOM)
+        # 2. [LLM] analisa 100-200 candidatos (mais contexto semântico)
+        # 3. [Rails pós-LLM] aplicam min_domains, diversidade, etc.
+        # 
+        # Fluxo antigo (muito restritivo):
+        # 1. [Zipper] 283 → 200 (limite global OOM)
+        # 2. [Domain cap] 200 → 70 (max 3 por domínio)
+        # 3. [LLM] analisa 70 candidatos (poucos, perdeu muita coisa)
         
-        if domain_diversity_enabled:
-            domain_cap_value = _safe_get_valve(current_valves, "max_urls_per_domain", 4)
-            logger.info(f"[Discovery] enable_domain_diversity enabled, using max_urls_per_domain={domain_cap_value}")
-            domain_counts: Dict[str, int] = {}
-            capped_candidates = []
-            for c in unique_candidates:
-                domain = c.domain
-                count = domain_counts.get(domain, 0)
-                if count < domain_cap_value:
-                    capped_candidates.append(c)
-                    domain_counts[domain] = count + 1
-            
-            if len(capped_candidates) < len(unique_candidates):
-                logger.info(f"[Discovery] soft_domain_cap reduced candidates from {len(unique_candidates)} to {len(capped_candidates)}")
-                unique_candidates = capped_candidates
+        logger.info(f"[Discovery] Skipping pre-LLM domain diversity (was too aggressive: 283→200→70)")
+        logger.info(f"[Discovery] Proceeding with {len(unique_candidates)} candidates for LLM analysis (semantic ranking handles diversity)")
         
         # Análise com LLM se habilitada
         # Para @noticias, usar threshold menor (sempre curar se > 3 URLs)

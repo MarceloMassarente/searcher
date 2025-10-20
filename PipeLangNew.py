@@ -134,6 +134,27 @@ class StepTelemetry:
         }
 
 
+@dataclass
+class PipelineError(Exception):
+    """Erro estruturado do pipeline com contexto rico para observabilidade."""
+    stage: str  # discovery|scraping|reducer|analyst|judge|planner|synthesis|api
+    error_type: str
+    message: str
+    context: Dict[str, Any]
+    traceback_str: Optional[str] = None
+    correlation_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "error_type": self.error_type,
+            "message": self.message,
+            "context": self.context,
+            "correlation_id": self.correlation_id,
+            "traceback": self.traceback_str,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        }
+
 def _emit_decision_snapshot(step: str, vector: Dict[str, Any], reason: str = "", contract_diff: Optional[Dict[str, Any]] = None) -> None:
     """Emit structured decision snapshot without modifying StepTelemetry.
     Safe to call even if values are large; truncates where appropriate.
@@ -1943,10 +1964,49 @@ class AnalystLLM:
                             "[DEBUG][ANALYST] Wrapped response in {} (LLM forgot envelope)"
                         )
 
-            # v4.4: Usar parse_json_resilient direto (modo balanced - máximo esforço)
-            parsed = parse_json_resilient(
-                cleaned_reply, mode="balanced", allow_arrays=False
-            )
+            # v5: Prefer structured outputs via Pydantic first, fallback to resilient parser
+            parsed = None
+            try:
+                class EvidenceModel(BaseModel):
+                    url: str
+                    trecho: Optional[str] = None
+
+                class FactModel(BaseModel):
+                    texto: str
+                    confiança: Literal["alta", "média", "baixa"]
+                    evidencias: Optional[List[EvidenceModel]] = []
+
+                class SelfAssessmentModel(BaseModel):
+                    coverage_score: float
+                    confidence: Literal["alta", "média", "baixa"]
+                    gaps_critical: bool
+                    suggest_refine: bool
+                    suggest_pivot: bool
+                    reasoning: Optional[str] = None
+
+                class AnalystSchema(BaseModel):
+                    summary: str = ""
+                    facts: List[FactModel] = []
+                    lacunas: List[str] = []
+                    self_assessment: Optional[SelfAssessmentModel] = None
+
+                # Try strict load via Pydantic (expecting JSON string)
+                # If not JSON, fallback below
+                try:
+                    json_obj = json.loads(cleaned_reply)
+                except Exception:
+                    json_obj = None
+                if json_obj is not None:
+                    model_obj = AnalystSchema.model_validate(json_obj)
+                    parsed = json.loads(model_obj.model_dump_json())
+            except Exception:
+                parsed = None
+
+            if parsed is None:
+                # Fallback resilient parser
+                parsed = parse_json_resilient(
+                    cleaned_reply, mode="balanced", allow_arrays=False
+                )
 
             if getattr(self.valves, "VERBOSE_DEBUG", False):
                 print(f"[DEBUG] Analyst parsed: {parsed is not None}")
@@ -2016,9 +2076,14 @@ class AnalystLLM:
                 re_raw = reask_out.get("replies", [""])[0] if reask_out else ""
 
                 # Parse estrito primeiro; se falhar, tentar balanced
-                reparsed = parse_json_resilient(
-                    re_raw, mode="strict", allow_arrays=False
-                )
+                reparsed = None
+                try:
+                    if re_raw:
+                        json_obj2 = json.loads(re_raw)
+                        model_obj2 = AnalystSchema.model_validate(json_obj2)
+                        reparsed = json.loads(model_obj2.model_dump_json())
+                except Exception:
+                    reparsed = None
                 if not reparsed and re_raw:
                     reparsed = parse_json_resilient(
                         re_raw, mode="balanced", allow_arrays=False
@@ -2060,10 +2125,17 @@ class AnalystLLM:
                     }
 
         except Exception as e:
-            logger.error(f"[ANALYST] Exceção não tratada: {e}")
-            if getattr(self.valves, "VERBOSE_DEBUG", False):
-                import traceback
-                traceback.print_exc()
+            import traceback as _tb
+            tb_str = _tb.format_exc()
+            err = PipelineError(
+                stage="analyst",
+                error_type=e.__class__.__name__,
+                message=str(e),
+                context={"context_len": len(accumulated_context)},
+                traceback_str=tb_str,
+                correlation_id=correlation_id,
+            )
+            logger.error(f"[ANALYST] {json.dumps(err.to_dict(), ensure_ascii=False)}")
             return {
                 "summary": "",
                 "facts": [],
@@ -4503,41 +4575,34 @@ INSTRUÇÕES:
 # ============================================================================
 
 class ResearchState(TypedDict, total=False):
-    """Estado compartilhado entre nós LangGraph - TODOS os campos do Orchestrator"""
-    
-    # ===== CONTEXTO & CONTROLE =====
+    """Estado compartilhado entre nós LangGraph - TODOS os campos do Orchestrator
+
+    Observação: Estrutura plena mantida por compatibilidade. Para tipagem e validação
+    gradual, modelos Pydantic hierárquicos são introduzidos abaixo.
+    """
+    # Campos originais mantidos (ver referência anterior)
     correlation_id: str
-    query: str                          # Query atual (pode mudar em refine)
-    original_query: str                 # Query inicial da fase
-    phase_index: int                    # Índice da fase atual (1-based)
-    phase_context: Dict                 # Contexto completo da fase
-    loop_count: int                     # Contador de loops (0-based)
-    max_loops: int                      # Limite de loops
-    
-    # ===== CONTRACT & CONFIGURATION =====
-    contract: Dict                      # Contract completo
-    all_phase_queries: List[str]        # TODAS as queries (para Context Reducer)
-    intent_profile: str                 # Perfil detectado
-    
-    # ===== DISCOVERY RESULTS =====
-    discovered_urls: List[str]          # URLs descobertas
-    new_urls: List[str]                 # URLs novas (não em cache)
-    cached_urls: List[str]              # URLs já scraped
-    
-    # ===== SCRAPING & CACHE =====
-    scraped_cache: Dict[str, str]       # {url: content}
-    raw_content: str                    # Conteúdo bruto scraped
-    filtered_content: str               # Após Context Reducer
-    accumulated_context: str            # Acumulado de TODAS iterações
-    
-    # ===== ANALYSIS RESULTS =====
-    analysis: Dict                      # Output do Analyst
+    query: str
+    original_query: str
+    phase_index: int
+    phase_context: Dict
+    loop_count: int
+    max_loops: int
+    contract: Dict
+    all_phase_queries: List[str]
+    intent_profile: str
+    discovered_urls: List[str]
+    new_urls: List[str]
+    cached_urls: List[str]
+    scraped_cache: Dict[str, str]
+    raw_content: str
+    filtered_content: str
+    accumulated_context: str
+    analysis: Dict
     summary: str
     facts: List[Dict]
     lacunas: List
     self_assessment: Dict
-    
-    # ===== EVIDENCE METRICS =====
     evidence_metrics: Dict
     unique_domains: int
     facts_with_evidence: int
@@ -4545,15 +4610,11 @@ class ResearchState(TypedDict, total=False):
     high_confidence_facts: int
     contradictions: int
     evidence_coverage: float
-    
-    # ===== NOVELTY TRACKING =====
-    used_claim_hashes: List[str]        # Hashes de fatos já vistos
-    used_domains: List[str]             # Domínios já consultados
+    used_claim_hashes: List[str]
+    used_domains: List[str]
     new_facts_ratio: float
     new_domains_ratio: float
-    
-    # ===== JUDGE RESULTS =====
-    judgement: Dict                     # Output do Judge
+    judgement: Dict
     verdict: Literal["done", "refine", "new_phase"]
     reasoning: str
     next_query: Optional[str]
@@ -4561,33 +4622,57 @@ class ResearchState(TypedDict, total=False):
     phase_score: float
     phase_metrics: Dict
     modifications: List[str]
-    
-    # ===== COVERAGE & QUALITY =====
     coverage_score: float
     entities_covered: int
     analyst_confidence: str
     gaps_critical: bool
     suggest_refine: bool
     suggest_pivot: bool
-    
-    # ===== TELEMETRY =====
     telemetry_loops: List[Dict]
     seed_core_source: Optional[str]
     analyst_proposals: Dict
-    # ===== EVENT EMITTER (UX) =====
     __event_emitter__: Optional[Callable]
-    
-    # ===== FLAGS & CONTROL =====
     diminishing_returns: bool
     failed_query: bool
     previous_queries: List[str]
     failed_queries: List[str]
-    
-    # ===== PHASE RESULTS (Global) =====
     phase_results: List[Dict]
-    
-    # ===== SYNTHESIS (Final) =====
     final_synthesis: Optional[str]
+
+
+class RSQueryModel(BaseModel):
+    objetivo: str
+    previous_queries: List[str] = []
+    next_query: Optional[str] = None
+
+
+class RSEvidenceModel(BaseModel):
+    url: str
+    trecho: Optional[str] = None
+
+
+class RSFactModel(BaseModel):
+    texto: str
+    confiança: Literal["alta", "média", "baixa"]
+    evidencias: Optional[List[RSEvidenceModel]] = []
+
+
+class RSResultsModel(BaseModel):
+    discoveries: List[str] = []
+    facts: List[RSFactModel] = []
+    coverage_score: float = 0.0
+
+
+class RSTelemetryModel(BaseModel):
+    correlation_id: str
+    loop_count: int = 0
+    max_loops: int = 3
+
+
+class ResearchStateModel(BaseModel):
+    query: RSQueryModel
+    results: RSResultsModel
+    telemetry: RSTelemetryModel
 # ============================================================================
 # 2. HELPER CLASSES (COMPLETAS - já migradas acima)
 # ============================================================================
@@ -4690,7 +4775,17 @@ class GraphNodes:
             return out
             
         except Exception as e:
-            logger.error(f"Discovery failed: {e}")
+            import traceback as _tb
+            tb_str = _tb.format_exc()
+            err = PipelineError(
+                stage="discovery",
+                error_type=e.__class__.__name__,
+                message=str(e),
+                context={"query": query},
+                traceback_str=tb_str,
+                correlation_id=correlation_id,
+            )
+            logger.error(f"[DISCOVERY] {json.dumps(err.to_dict(), ensure_ascii=False)}")
             
             # Recovery: Try to return partial results if available
             partial_urls = []
@@ -4725,6 +4820,9 @@ class GraphNodes:
         new_urls = state.get('new_urls', [])
         scraped_cache = state.get('scraped_cache', {})
         
+        # Concurrency valve (default 5) for per-URL fallback scraping
+        concurrency = int(getattr(self.valves, 'SCRAPER_CONCURRENCY', 5) or 5)
+        
         # ===== TELEMETRY =====
         tel = StepTelemetry(
             step="scraping",
@@ -4742,27 +4840,26 @@ class GraphNodes:
                     "correlation_id": correlation_id,
                 }
                 
+                batch_success = False
                 try:
+                    # Primary: batch scraping via tool (preferred)
                     if asyncio.iscoroutinefunction(self.scraper_tool):
                         scrape_result = await self.scraper_tool(**scrape_params)
                     else:
                         scrape_result = await asyncio.to_thread(
                             lambda: self.scraper_tool(**scrape_params)
                         )
-                    
                     if isinstance(scrape_result, str):
                         scrape_result = json.loads(scrape_result)
-                    
-                    # Update scraped cache
                     scraped_content = scrape_result.get("content", {})
-                    scraped_cache.update(scraped_content)
-                    
+                    if isinstance(scraped_content, dict) and scraped_content:
+                        scraped_cache.update(scraped_content)
+                        batch_success = True
                 except TypeError as e:
                     # Tool doesn't support correlation_id - try with basic params
                     if getattr(self.valves, "VERBOSE_DEBUG", False):
                         print(f"[S_WRAPPER] Advanced params failed: {e}")
                         print(f"[S_WRAPPER] Falling back to basic urls only")
-                    
                     try:
                         basic_params = {"urls": new_urls}
                         if asyncio.iscoroutinefunction(self.scraper_tool):
@@ -4771,22 +4868,73 @@ class GraphNodes:
                             scrape_result = await asyncio.to_thread(
                                 lambda: self.scraper_tool(**basic_params)
                             )
-                        
                         if isinstance(scrape_result, str):
                             scrape_result = json.loads(scrape_result)
-                        
                         scraped_content = scrape_result.get("content", {})
-                        scraped_cache.update(scraped_content)
-                        
-                        if getattr(self.valves, "VERBOSE_DEBUG", False):
-                            print(f"[S_WRAPPER] Fallback successful: {len(scraped_content)} URLs scraped")
-                            
+                        if isinstance(scraped_content, dict) and scraped_content:
+                            scraped_cache.update(scraped_content)
+                            batch_success = True
                     except Exception as fallback_e:
                         logger.error(f"[S_WRAPPER] Even basic scraping failed: {fallback_e}")
-                        # Continue without scraping this batch
+                        # Continue to per-URL fallback
                 except Exception as e:
                     logger.error(f"[S_WRAPPER] Unexpected scraping error: {e}")
-                    # Continue without scraping this batch
+                    # Continue to per-URL fallback
+
+                # Fallback: per-URL concurrent scraping if batch failed or returned empty
+                if not batch_success:
+                    await _safe_emit(em, f"[SCRAPE][{correlation_id}] batch failed/empty, using per-URL concurrency={concurrency}")
+                    sem = asyncio.Semaphore(max(1, concurrency))
+
+                    async def _scrape_one(u: str) -> tuple[str, Optional[str]]:
+                        async with sem:
+                            try:
+                                # Attempt tool with single-URL param shapes
+                                # Prefer common shapes: {urls:[u]} then {url:u}
+                                if asyncio.iscoroutinefunction(self.scraper_tool):
+                                    res = await self.scraper_tool(**{"urls": [u]})
+                                else:
+                                    res = await asyncio.to_thread(lambda: self.scraper_tool(**{"urls": [u]}))
+                            except TypeError:
+                                try:
+                                    if asyncio.iscoroutinefunction(self.scraper_tool):
+                                        res = await self.scraper_tool(**{"url": u})
+                                    else:
+                                        res = await asyncio.to_thread(lambda: self.scraper_tool(**{"url": u}))
+                                except Exception as e:
+                                    logger.debug(f"[S_ONE] {u} failed: {e}")
+                                    return (u, None)
+                            except Exception as e:
+                                logger.debug(f"[S_ONE] {u} failed: {e}")
+                                return (u, None)
+
+                            try:
+                                if isinstance(res, str):
+                                    res = json.loads(res)
+                                # Normalize result
+                                if isinstance(res, dict):
+                                    # Accept shapes: {content:{url: text}} or {url:..., content:...}
+                                    if "content" in res and isinstance(res["content"], dict):
+                                        return (u, res["content"].get(u))
+                                    if "url" in res and "content" in res and isinstance(res["url"], str):
+                                        return (res["url"], res["content"])  # pragma: no cover
+                                elif isinstance(res, list):
+                                    # List of dicts with url/content
+                                    for it in res:
+                                        if isinstance(it, dict) and it.get("url") == u:
+                                            return (u, it.get("content") or it.get("text"))
+                                return (u, None)
+                            except Exception as e:
+                                logger.debug(f"[S_ONE] {u} parse failed: {e}")
+                                return (u, None)
+
+                    results = await asyncio.gather(*[_scrape_one(u) for u in new_urls], return_exceptions=False)
+                    added = 0
+                    for (u, text) in results:
+                        if u and text:
+                            scraped_cache[u] = text
+                            added += 1
+                    await _safe_emit(em, f"[SCRAPE][{correlation_id}] per-URL scraped={added}")
             
             # ===== TELEMETRY FINAL =====
             if tel is not None:
@@ -4816,7 +4964,17 @@ class GraphNodes:
             return out
             
         except Exception as e:
-            logger.error(f"Scraping failed: {e}")
+            import traceback as _tb
+            tb_str = _tb.format_exc()
+            err = PipelineError(
+                stage="scraping",
+                error_type=e.__class__.__name__,
+                message=str(e),
+                context={"new_urls": len(new_urls)},
+                traceback_str=tb_str,
+                correlation_id=correlation_id,
+            )
+            logger.error(f"[SCRAPING] {json.dumps(err.to_dict(), ensure_ascii=False)}")
             
             # Recovery: Return existing cache even if new scraping failed
             logger.info(f"[SCRAPING] Recovery: Returning existing cache with {len(scraped_cache)} URLs")
@@ -4927,7 +5085,17 @@ class GraphNodes:
             await _safe_emit(em, f"[REDUCE][{correlation_id}] parse_error acc={len(accumulated_context)}")
             return out
         except Exception as e:
-            logger.error(f"Context reducer failed unexpectedly: {e}")
+            import traceback as _tb
+            tb_str = _tb.format_exc()
+            err = PipelineError(
+                stage="reducer",
+                error_type=e.__class__.__name__,
+                message=str(e),
+                context={"raw_len": len(raw_content)},
+                traceback_str=tb_str,
+                correlation_id=correlation_id,
+            )
+            logger.error(f"[REDUCER] {json.dumps(err.to_dict(), ensure_ascii=False)}")
             accumulated_context += f"\n{raw_content}\n"
             out = {
                 "filtered_content": raw_content,
@@ -5450,7 +5618,10 @@ def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_t
     nodes = GraphNodes(valves, discovery_tool, scraper_tool, context_reducer_tool)
     
     # Criar grafo
-    workflow = StateGraph(ResearchState) if LANGGRAPH_AVAILABLE else StateGraph()
+    if not LANGGRAPH_AVAILABLE:
+        # Falha explícita: LangGraph é obrigatório
+        raise ImportError("LangGraph não está disponível. Instale com: pip install langgraph")
+    workflow = StateGraph(ResearchState)
     
     # Adicionar nós
     workflow.add_node("discovery", nodes.discovery_node)
@@ -5484,15 +5655,10 @@ def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_t
         compiled_graph = workflow.compile(checkpointer=memory)
         # Verify compiled graph has required methods
         if not hasattr(compiled_graph, 'ainvoke'):
-            logger.warning("Compiled graph missing ainvoke method")
+            raise RuntimeError("Compiled graph missing ainvoke method")
         return compiled_graph
     except Exception as e:
-        logger.error(f"Failed to compile LangGraph: {e}")
-        # Return a mock object that will fail gracefully
-        class MockGraph:
-            async def ainvoke(self, *args, **kwargs):
-                raise RuntimeError(f"LangGraph compilation failed: {e}")
-        return MockGraph()
+        raise RuntimeError(f"LangGraph compilation failed: {e}")
 
 
 class Pipe:
@@ -5596,6 +5762,19 @@ class Pipe:
             le=600,  # ⬆️ Aumentado: 300→600s
             description="Timeout de leitura HTTP base (httpx client). Para síntese final, usar LLM_TIMEOUT_SYNTHESIS.",
         )
+        
+        @validator("LLM_TIMEOUT_SYNTHESIS")
+        def _validate_synthesis_timeout_vs_httpx(cls, v, values):
+            httpx_timeout = values.get("HTTPX_READ_TIMEOUT", 180)
+            try:
+                httpx_num = int(httpx_timeout)
+            except Exception:
+                httpx_num = 180
+            if v > httpx_num:
+                raise ValueError(
+                    f"LLM_TIMEOUT_SYNTHESIS ({v}s) deve ser <= HTTPX_READ_TIMEOUT ({httpx_num}s)"
+                )
+            return v
         LLM_TIMEOUT_PLANNER: int = Field(
             default=180,
             ge=60,

@@ -6353,9 +6353,22 @@ class LRUCache:
         self.ttl = ttl_seconds
         self.hits = 0
         self.misses = 0
+        # Thread-safety
+        try:
+            from threading import RLock
+            self._lock = RLock()
+        except Exception:
+            self._lock = None
     
     def get(self, key: str) -> Optional[Any]:
         """Recupera item do cache se ainda válido (move to end = MRU)"""
+        lock = getattr(self, "_lock", None)
+        if lock:
+            with lock:
+                return self._get_nolock(key)
+        return self._get_nolock(key)
+
+    def _get_nolock(self, key: str) -> Optional[Any]:
         if key in self.cache:
             cache_entry = self.cache[key]
             if len(cache_entry) == 3:
@@ -6384,6 +6397,13 @@ class LRUCache:
     
     def put(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> None:
         """Armazena item no cache com TTL e LRU eviction"""
+        lock = getattr(self, "_lock", None)
+        if lock:
+            with lock:
+                return self._put_nolock(key, value, ttl_seconds)
+        return self._put_nolock(key, value, ttl_seconds)
+
+    def _put_nolock(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> None:
         ttl_to_use = ttl_seconds if ttl_seconds is not None else self.ttl
         
         # Se já existe, atualizar e mover para o fim
@@ -6404,6 +6424,14 @@ class LRUCache:
     
     def clear(self) -> None:
         """Limpa todo o cache"""
+        lock = getattr(self, "_lock", None)
+        if lock:
+            with lock:
+                self.cache.clear()
+                self.hits = 0
+                self.misses = 0
+                logger.info(f"[Cache] CLEARED")
+                return
         self.cache.clear()
         self.hits = 0
         self.misses = 0
@@ -6431,12 +6459,26 @@ class SimpleCache(LRUCache):
 
 # Cache global
 _global_cache: Optional[LRUCache] = None
+_global_cache_lock = None
 
 def get_cache(ttl_seconds: int = 600, max_size: int = 1000) -> LRUCache:
     """Retorna instância global do cache"""
-    global _global_cache
-    if _global_cache is None:
-        _global_cache = LRUCache(max_size=max_size, ttl_seconds=ttl_seconds)
+    global _global_cache, _global_cache_lock
+    if _global_cache_lock is None:
+        try:
+            from threading import RLock
+            _global_cache_lock = RLock()
+        except Exception:
+            _global_cache_lock = None
+    if _global_cache is not None:
+        return _global_cache
+    if _global_cache_lock:
+        with _global_cache_lock:
+            if _global_cache is None:
+                _global_cache = LRUCache(max_size=max_size, ttl_seconds=ttl_seconds)
+            return _global_cache
+    # Fallback without lock
+    _global_cache = LRUCache(max_size=max_size, ttl_seconds=ttl_seconds)
     return _global_cache
 
 # ============================================================================

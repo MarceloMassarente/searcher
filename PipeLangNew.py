@@ -3216,7 +3216,6 @@ Antes de retornar o plano, verifique OBRIGATORIAMENTE cada item abaixo:
    - Objectives das fases são mutualmente exclusivos (não overlap óbvio)?
    - Se detectou overlap → reescreva objectives antes de retornar
    - Fases cobrem TODO o escopo (nenhuma key_question órfã)?
-
 ✅ **SEED_CORE VALIDATION:**
 - [ ] TODAS as fases têm seed_core (12-200 chars)
 - [ ] seed_core ≠ seed_query (seed_core é EXPANSÃO)
@@ -6402,7 +6401,10 @@ class Pipe:
         for i, phase in enumerate(out["contract"].get("fases", []), 1):
             yield f"**Fase {i}:** {phase.get('objetivo', 'N/A')}\n"
             yield f"- Query: {phase.get('query_sugerida', 'N/A')}\n"
-            yield f"- Seed: {phase.get('seed_core', 'N/A')}\n\n"
+            yield f"- Seed: {phase.get('seed_core', 'N/A')}\n"
+            yield f"- Must Terms: {phase.get('must_terms', 'N/A')}\n"
+            yield f"- Time Hint: {phase.get('time_hint', 'N/A')}\n"
+            yield f"- Key Questions: {phase.get('key_questions', 'N/A')}\n\n"
 
         yield "**[INFO]** Digite 'siga' para executar o plano\n"
 

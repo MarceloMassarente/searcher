@@ -3993,6 +3993,62 @@ class JudgeLLM:
         if programmatic_decision.get("new_phase"):
             new_phase = programmatic_decision["new_phase"]
 
+        # Guard 3: Seed family rotation (from PipeHaystack)
+        if verdict == "new_phase" and new_phase:
+            loop_number = len(telemetry_loops) if telemetry_loops else 0
+            
+            # Rotate family only after loop ≥2 (third iteration)
+            if loop_number >= 2:
+                current_family = (
+                    phase_context.get("seed_family_hint", "entity-centric")
+                    if phase_context
+                    else "entity-centric"
+                )
+                
+                new_family = self._switch_seed_family(current_family)
+                
+                # Inject seed_family_hint into new_phase
+                if isinstance(new_phase, dict):
+                    new_phase["seed_family_hint"] = new_family
+                    
+                    # Update reasoning to document rotation
+                    if "reasoning" in new_phase:
+                        new_phase["reasoning"] += f" Mudança de família: {current_family} → {new_family}"
+                    else:
+                        new_phase["reasoning"] = f"Mudança de família: {current_family} → {new_family}"
+                
+                if getattr(self.valves, "VERBOSE_DEBUG", False):
+                    logger.info(f"[JUDGE] Rotação de família: {current_family} → {new_family} (loop {loop_number})")
+
+        # Guard 1: Anti-duplicate NEW_PHASE (from PipeHaystack)
+        if verdict == "new_phase" and new_phase and full_contract:
+            existing_phases = full_contract.get("fases", [])
+            if existing_phases and isinstance(new_phase, dict):
+                new_obj = new_phase.get("objetivo") or new_phase.get("objective", "")
+                new_seed = new_phase.get("seed_query", "")
+                new_type = new_phase.get("phase_type", "")
+                
+                # Check multidimensional similarity
+                max_sim_score, max_sim_idx = self._calculate_multi_dimensional_similarity(
+                    new_obj, new_seed, new_type, existing_phases
+                )
+                
+                threshold = getattr(self.valves, "DUPLICATE_DETECTION_THRESHOLD", 0.75)
+                if max_sim_score > threshold:
+                    duplicate_phase = existing_phases[max_sim_idx]
+                    logger.warning(
+                        f"[JUDGE] Duplicate phase detected (similarity {max_sim_score:.2f}): '{duplicate_phase.get('name', 'N/A')}'"
+                    )
+                    modifications.append(
+                        f"Anti-duplicate guard: new_phase → refine (similarity {max_sim_score:.2f} with '{duplicate_phase.get('name', 'N/A')}')"
+                    )
+                    
+                    # Convert to REFINE and reuse seed_query
+                    verdict = "refine"
+                    next_query = new_phase.get("seed_query", "")
+                    reasoning = f"[AUTO-CORREÇÃO] Fase proposta duplica '{duplicate_phase.get('name', 'fase existente')}'. Convertido para refine com query focada."
+                    new_phase = {}  # Clear new_phase
+
         # 📊 FASE 1: Log JSON do Judge (observabilidade/auditoria)
         decision = {
             "decision": verdict,
@@ -4004,6 +4060,39 @@ class JudgeLLM:
             "loops": f"{len(telemetry_loops) if telemetry_loops else 0}/{getattr(self.valves, 'MAX_AGENT_LOOPS', 2)}",
         }
         logger.info(f"[JUDGE]{json.dumps(decision, ensure_ascii=False)}")
+
+        # Guard 2: Anti-redundant REFINE (from PipeHaystack)
+        if verdict == "refine" and next_query and telemetry_loops:
+            from difflib import SequenceMatcher
+            
+            # Extract previously used queries
+            used_queries = []
+            for loop in telemetry_loops:
+                q = loop.get("query", "").strip().lower()
+                if q:
+                    used_queries.append(q)
+            
+            # Check similarity with previous queries
+            next_lower = next_query.strip().lower()
+            for used in used_queries:
+                similarity = SequenceMatcher(None, next_lower, used).ratio()
+                if similarity > 0.7:
+                    if getattr(self.valves, "VERBOSE_DEBUG", False):
+                        logger.warning(
+                            f"[JUDGE] next_query too similar to previous query: {similarity:.0%} similarity"
+                        )
+                        logger.warning(f"[JUDGE] Previous: '{used}'")
+                        logger.warning(f"[JUDGE] Proposed: '{next_lower}'")
+                    
+                    modifications.append(
+                        f"Anti-redundant refine: refine → done (query similarity {similarity:.0%})"
+                    )
+                    
+                    # Force DONE instead of spinning with duplicate query
+                    verdict = "done"
+                    reasoning = f"[AUTO-CORREÇÃO] Query proposta muito similar à anterior ({similarity:.0%}). Parando para evitar repetição inútil."
+                    next_query = ""
+                    break
 
         return {
             "reasoning": reasoning,
@@ -5767,6 +5856,14 @@ class Pipe:
         ANALYST_DEDUP_MODEL: str = Field(
             default="sentence-transformers/all-MiniLM-L6-v2",
             description="Modelo embeddings para Analyst (se semantic)"
+        )
+
+        # Judge Decision Guards (from PipeHaystack)
+        DUPLICATE_DETECTION_THRESHOLD: float = Field(
+            default=0.75,
+            ge=0.5,
+            le=0.95,
+            description="Threshold for duplicate phase detection (multidimensional similarity)"
         )
 
         # Synthesis Dedup Strategy

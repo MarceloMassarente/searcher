@@ -2995,10 +2995,6 @@ SE o payload tem 4+ ENTITIES_CANONICAL → MODO DISTRIBUÍDO:
        - Quando não há ruído óbvio e bem definido
        - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)
      * **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resiliente a ruído
-   - time_hint: {"recency": "90d|1y|3y", "strict": true/false}
-   - source_bias: ["oficial", "primaria", "secundaria"]
-   - evidence_goal: {"official_or_two_independent": true, "min_domains": 3}
-   - lang_bias e geo_bias apropriados
 
 🆕 **NOVO v4.7 - SEED_CORE E SEED_FAMILY_HINT:**
 
@@ -6449,17 +6445,17 @@ class Pipe:
         )
 
         # Validate contract
-        if not isinstance(out, dict) or "phases" not in out:
+        if not isinstance(out, dict) or "contract" not in out:
             yield "**[ERRO]** Contrato inválido gerado pelo Planner\n"
             return
 
-        self._last_contract = out
+        self._last_contract = out["contract"]
         yield "**[INFO]** ✅ Contrato gerado com sucesso\n"
 
         # Render contract for user
         yield f"\n📋 **Plano de Pesquisa**\n\n"
-        for i, phase in enumerate(out.get("phases", []), 1):
-            yield f"**Fase {i}:** {phase.get('objective', 'N/A')}\n"
+        for i, phase in enumerate(out["contract"].get("fases", []), 1):
+            yield f"**Fase {i}:** {phase.get('objetivo', 'N/A')}\n"
             yield f"- Query: {phase.get('query_sugerida', 'N/A')}\n"
             yield f"- Seed: {phase.get('seed_core', 'N/A')}\n\n"
 

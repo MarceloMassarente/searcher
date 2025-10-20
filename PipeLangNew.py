@@ -5511,136 +5511,7 @@ class GraphNodes:
         }
         await _safe_emit(em, f"[ANALYZE][{correlation_id}] end facts={len(out['facts'])} gaps={len(out['lacunas'])}")
         return out
-    def _calculate_novelty_metrics(self,analysis,state=None):
-        import hashlib
-        def h(s):s=(s or '').strip().lower();return hashlib.sha256(s.encode()).hexdigest()
-        uh=set(state.get('used_claim_hashes',[])or[])if state else set(getattr(self,'used_claim_hashes',[]))
-        ud=set(state.get('used_domains',[])or[])if state else set(getattr(self,'used_domains',[]))
-        fl=analysis.get('facts',[])or[]
-        ch={h(f.get('texto','')if isinstance(f,dict)else str(f))for f in fl}
-        cd=set()
-        for f in fl:
-            if isinstance(f,dict):
-                for e in f.get('evidencias',[])or[]:
-                    u=(e or{}).get('url')or''
-                    try:d=u.split('/')[2]if'/'in u else'';d and cd.add(d)
-                    except:pass
-        nf=len([h for h in ch if h not in uh])
-        nd=len([d for d in cd if d not in ud])
-        return(nf/max(len(ch),1)if ch else 0.0,nd/max(len(cd),1)if cd else 0.0)
 
-    async def judge_node(self, state: ResearchState) -> Dict:
-        """Judge node - complete implementation with loop count increment and telemetry"""
-        correlation_id = state.get('correlation_id', 'unknown')
-        em = state.get('__event_emitter__')
-        await _safe_emit(em, f"[JUDGE][{correlation_id}] start")
-        analysis = state.get('analysis', {})
-        phase_context = state.get('phase_context', {})
-        telemetry_loops = state.get('telemetry_loops', [])
-        current_loop = state.get('loop_count', 0)
-        
-        logger.info(f"[JUDGE][{correlation_id}] Avaliando fase (loop {current_loop})")
-        
-        try:
-            # Prepare telemetry data for Judge
-            telemetry_entry = {
-                "loop": current_loop,
-                "n_facts": len(analysis.get("facts", [])),
-                "unique_domains": 0,  # Would be calculated from evidence_metrics
-                "new_facts_ratio": analysis.get("new_facts_ratio", 0.0),
-                "new_domains_ratio": analysis.get("new_domains_ratio", 0.0),
-                "contradictions": 0,  # Would be calculated from analysis
-            }
-            
-            # Add to telemetry loops
-            updated_telemetry_loops = telemetry_loops + [telemetry_entry]
-            
-            # Call Judge LLM with full context
-            _emit_decision_snapshot(
-                step="judge",
-                vector={
-                    "loop": current_loop,
-                    "facts": len(analysis.get("facts", [])),
-                },
-                reason="judge_start",
-            )
-            judgement = await self.judge.run(
-                user_prompt=state.get('query', ''),
-                analysis=analysis,
-                phase_context=phase_context,
-                telemetry_loops=updated_telemetry_loops,
-                intent_profile=state.get('intent_profile'),
-                full_contract=state.get('contract'),
-                valves=self.valves,
-                refine_queries=state.get('refine_queries'),
-                phase_candidates=state.get('phase_candidates'),
-                previous_queries=state.get('previous_queries'),
-                failed_queries=state.get('failed_queries'),
-            )
-            
-            # Increment loop count
-            new_loop_count = current_loop + 1
-            
-            # Validate increment happened
-            if new_loop_count <= current_loop:
-                logger.error(f"[JUDGE][{correlation_id}] CRITICAL: loop_count not incrementing! current={current_loop}, new={new_loop_count}")
-                # Force increment as failsafe
-                new_loop_count = current_loop + 1
-
-            # Debug log increment
-            if self.valves.VERBOSE_DEBUG:
-                logger.info(f"[JUDGE][{correlation_id}] Loop increment: {current_loop} → {new_loop_count}")
-            
-            out = {
-                "judgement": judgement,
-                "verdict": judgement.get("verdict", "done"),
-                "reasoning": judgement.get("reasoning", ""),
-                "next_query": judgement.get("next_query", ""),
-                "new_phase": judgement.get("new_phase", {}),
-                "phase_score": judgement.get("phase_score", 0.0),
-                "phase_metrics": judgement.get("phase_metrics", {}),
-                "seed_family": judgement.get("seed_family"),
-                "modifications": judgement.get("modifications", []),
-                # State management
-                "loop_count": new_loop_count,
-                "telemetry_loops": updated_telemetry_loops,
-            }
-            _emit_decision_snapshot(
-                step="judge",
-                vector={
-                    "verdict": out.get("verdict"),
-                    "phase_score": out.get("phase_score"),
-                    "metrics": out.get("phase_metrics"),
-                },
-                reason="judge_result",
-            )
-            # Add debug logging before final emit
-            if self.valves.VERBOSE_DEBUG:
-                logger.info(f"[JUDGE][{correlation_id}] State after decision:")
-                logger.info(f"  - loop_count: {new_loop_count}/{state.get('max_loops', 3)}")
-                logger.info(f"  - verdict: {out.get('verdict')}")
-                logger.info(f"  - phase_score: {out.get('phase_score')}")
-                logger.info(f"  - failed_query: {state.get('failed_query', False)}")
-                logger.info(f"  - diminishing_returns: {state.get('diminishing_returns', False)}")
-            
-            await _safe_emit(em, f"[JUDGE][{correlation_id}] end verdict={out['verdict']} score={out['phase_score']}")
-            return out
-        except Exception as e:
-            logger.error(f"[JUDGE] Erro: {e}")
-            return {
-                "judgement": {},
-                "verdict": "done",
-                "reasoning": f"Erro: {e}",
-                "next_query": "",
-                "new_phase": {},
-                "phase_score": 0.0,
-                "phase_metrics": {},
-                "seed_family": None,
-                "modifications": [],
-                # State management
-                "loop_count": current_loop + 1,
-                "telemetry_loops": telemetry_loops,
-            }
 class Pipe:
     """
     Pipe compatível com OpenWebUI - delega ao LangGraph
@@ -6570,6 +6441,17 @@ class Pipe:
                     phase_results.append(phase_result)
                     global_state["phase_results"].append(phase_result)
                     
+                    # ✅ FIX: Populate telemetry_data with phase info
+                    telemetry_data["phases"].append({
+                        "phase": phase_index,
+                        "objective": objetivo,
+                        "verdict": verdict,
+                        "loops": loop_count,
+                        "duration": phase_duration,
+                        "urls": len(final_state.get("discovered_urls", [])),
+                        "context_chars": len(final_state.get("accumulated_context", "")),
+                    })
+                    
                     # ===== HANDLE NEW_PHASE VERDICT =====
                     if verdict == "new_phase":
                         new_phase = final_state.get("new_phase", {})
@@ -7036,6 +6918,17 @@ class Pipe:
                     user_msg, body
                 )
             research_context = self._detected_context
+            
+            # ✅ FIX: Guard against None research_context (can happen if context detection fails)
+            if not research_context or not isinstance(research_context, dict):
+                logger.warning("[SÍNTESE] research_context is None or not a dict, using minimal defaults")
+                research_context = {
+                    "tema_principal": user_msg[:100],
+                    "perfil_descricao": "pesquisa geral",
+                    "estilo": "executivo",
+                    "foco_detalhes": "dados concretos e evidências",
+                    "secoes_sugeridas": ["Resumo", "Principais Descobertas", "Análise Detalhada", "Conclusões"],
+                }
 
             # Extrair KEY_QUESTIONS e RESEARCH_OBJECTIVES do detected_context
             key_questions = research_context.get("key_questions", [])
@@ -7791,7 +7684,6 @@ Analise a consulta e produza:
   * technical_spec: análise TÉCNICA/OPERACIONAL/IMPLEMENTAÇÃO (ex: "arquitetura", "stack técnico", "processos operacionais")
   * literature_review: revisão ACADÊMICA/CIENTÍFICA (ex: "estado da arte", "revisão sistemática", "papers")
   * history_review: análise HISTÓRICA/TEMPORAL (ex: "evolução histórica", "contexto cultural")
-  
 - 5-10 key_questions (perguntas de DECISÃO que precisam resposta, não queries de busca)
 - entities_mentioned (APENAS empresas/produtos/pessoas/marcas específicas mencionadas EXPLICITAMENTE, incluir aliases)
 - research_objectives (3-5 objetivos de pesquisa específicos e mensuráveis)

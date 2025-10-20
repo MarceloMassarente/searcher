@@ -1,3 +1,13 @@
+---
+name: OpenAgent Clone - LangGraph Pipeline
+author: Marcelo
+description: "LangGraph-based research orchestration pipeline for company profile analysis"
+requirements:
+  - langgraph>=0.3.5
+  - langchain>=0.2.0
+  - langchain-openai>=0.1.0
+---
+
 #!/usr/bin/env python3
 """
 PipeHaystack_LangGraph v3.0 - Orquestração 100% LangGraph

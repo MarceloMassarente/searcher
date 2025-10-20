@@ -496,7 +496,6 @@ class QualityRailsModel(BaseModel):
 
 
 # ==================== CONSTANTS AND UTILITIES ====================
-
 class PipeConstants:
     """
     Configurações e constantes centralizadas do pipeline.
@@ -2930,7 +2929,6 @@ SE o payload tem 4+ ENTITIES_CANONICAL → MODO DISTRIBUÍDO:
 - [ ] **Seed_query válido?** 3-8 palavras, sem operadores, contém tema central + entidades?
 
 📐 REGRAS OBRIGATÓRIAS:
-
 ✅ CADA FASE TEM:
    - name: descritivo e único
    - objective: pergunta verificável (não genérica!)
@@ -4175,7 +4173,6 @@ Você é um ANALYST. Extraia 3-5 fatos importantes do contexto.
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
 # ============================================================================
-
 class PlannerLLM:
     def __init__(self, valves):
         self.valves = valves
@@ -4622,7 +4619,6 @@ INSTRUÇÕES:
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
 # ============================================================================
-
 class ResearchState(TypedDict, total=False):
     """Estado compartilhado entre nós LangGraph - TODOS os campos do Orchestrator
 
@@ -5001,7 +4997,6 @@ class GraphNodes:
             }
             await _safe_emit(em, f"[DISCOVERY][{correlation_id}] recovery urls={len(partial_urls)}")
             return out
-    
     async def scrape_node(self, state: ResearchState) -> Dict:
         """Scrape node - complete implementation from Orchestrator._run_scraping"""
         correlation_id = state.get('correlation_id', 'unknown')
@@ -5404,7 +5399,18 @@ class GraphNodes:
                     enable_context_aware=getattr(self.valves, "ENABLE_CONTEXT_AWARE_DEDUP", False),
                 )
                 
-                analyst_context = "\n\n".join(dedupe_result["chunks"])
+                deduped_paragraphs = dedupe_result["chunks"]
+                
+                # ✅ [FIX 3] Combinar pequenos parágrafos
+                deduped_paragraphs = _merge_small_paragraphs(
+                    deduped_paragraphs,
+                    min_chars=100
+                )
+                
+                if getattr(self.valves, "VERBOSE_DEBUG", False):
+                    print(f"[FIX 3] Merge pós-dedup: {dedupe_result['deduped_count']} → {len(deduped_paragraphs)} parágrafos")
+                
+                deduped_context = "\n\n".join(deduped_paragraphs)
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     print(f"[DEDUP ANALYST] {dedupe_result['original_count']} → {dedupe_result['deduped_count']} parágrafos ({dedupe_result['reduction_pct']:.1f}% redução)")
@@ -5805,7 +5811,6 @@ class Pipe:
             le=1.0,
             description="Threshold de uso de budget de fases para warning (0.75 = warn se >75% usado)",
         )
-
         PLANNER_OVERLAP_THRESHOLD: float = Field(
             default=0.70,
             ge=0.0,
@@ -6202,7 +6207,6 @@ class Pipe:
                 yield f"**[CONTEXT]** 🔍 Perfil: {self._detected_context.get('perfil_sugerido', 'N/A')} | Setor: {self._detected_context.get('setor_principal', 'N/A')} | Tipo: {self._detected_context.get('tipo_pesquisa', 'N/A')}\n"
 
         d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
-
         # Manual route - single execution path
         # If the user asks to continue (siga), execute stored contract
         if low in {"siga", "continue", "prosseguir"}:
@@ -6655,7 +6659,7 @@ class Pipe:
             """Extrai parágrafos do texto, suportando múltiplos formatos de separação
 
             Detecta automaticamente o formato baseado na densidade de parágrafos:
-            - Densidade baixa (>1000 chars/parágrafo médio) → markdown com \n único
+            - Densidade baixa (>2000 chars/parágrafo médio) → markdown com \n único
             - Densidade alta (<500 chars/parágrafo médio) → formato normal com \n\n
             """
             if not text:
@@ -6668,8 +6672,8 @@ class Pipe:
             avg_paragraph_size = len(text) / max(len(parts), 1)
 
             # Se densidade é muito baixa (parágrafos muito grandes), provavelmente é markdown com \n único
-            # Threshold: >1000 chars/parágrafo médio indica blocos gigantes, não parágrafos reais
-            if avg_paragraph_size > 1000:
+            # Threshold: >2000 chars/parágrafo médio indica blocos gigantes, não parágrafos reais
+            if avg_paragraph_size > 2000 or "\n\n" not in text:
                 # Markdown do scraper/Context Reducer usa \n único
                 # Agrupar linhas não vazias em blocos (parágrafos)
                 lines = text.split("\n")
@@ -6745,6 +6749,23 @@ class Pipe:
 
             return [p for p in parts if len(p) > 20]
 
+        def _merge_small_paragraphs(paragraphs: list, min_chars: int = 100) -> list:
+            """Combina parágrafos pequenos para evitar fragmentação"""
+            if not paragraphs:
+                return []
+            merged = []
+            buffer = ""
+            for para in paragraphs:
+                if buffer and len(buffer) + len(para) + 1 < min_chars:
+                    buffer += " " + para
+                else:
+                    if buffer:
+                        merged.append(buffer)
+                    buffer = para
+            if buffer:
+                merged.append(buffer)
+            return merged
+
         # Build context (with optional deduplication and size limit)
         # Get accumulated context from global state or phase results
         raw_context = ""
@@ -6789,9 +6810,18 @@ class Pipe:
                 entities = self._last_contract.get("entities", {}).get("canonical", [])
                 extracted_must_terms = entities[:5]  # Limitar a 5 termos mais relevantes
             
+            # ✅ [FIX 2] Usar target DINÂMICO em vez de fixo 200
+            target_paragraphs = max(
+                100,
+                min(
+                    int(len(raw_paragraphs) / 10),
+                    500
+                )
+            )
+            
             dedupe_result = deduplicator.dedupe(
                 chunks=raw_paragraphs,
-                max_chunks=self.valves.MAX_DEDUP_PARAGRAPHS,
+                max_chunks=target_paragraphs,
                 algorithm=algorithm,
                 threshold=threshold,
                 preserve_order=self.valves.PRESERVE_PARAGRAPH_ORDER,  # Respeita valve
@@ -6804,6 +6834,16 @@ class Pipe:
             )
 
             deduped_paragraphs = dedupe_result["chunks"]
+            
+            # ✅ [FIX 3] Combinar pequenos parágrafos
+            deduped_paragraphs = _merge_small_paragraphs(
+                deduped_paragraphs,
+                min_chars=100
+            )
+            
+            if getattr(self.valves, "VERBOSE_DEBUG", False):
+                print(f"[FIX 3] Merge pós-dedup: {dedupe_result['deduped_count']} → {len(deduped_paragraphs)} parágrafos")
+            
             deduped_context = "\n\n".join(deduped_paragraphs)
 
             order_mode = (
@@ -6815,6 +6855,32 @@ class Pipe:
             yield f"**[SÍNTESE]** Deduplicação ativa ({order_mode}, {dedupe_result['algorithm_used']}): {dedupe_result['original_count']} → {dedupe_result['deduped_count']} parágrafos ({dedupe_result['reduction_pct']:.1f}% redução)\n"
             await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Tokens economizados: ~{dedupe_result['tokens_saved']}\n")
             yield f"**[SÍNTESE]** Tokens economizados: ~{dedupe_result['tokens_saved']}\n"
+
+            # ✅ [DIAGNÓSTICO] Análise de fragmentação
+            if raw_paragraphs:
+                sizes = [len(p) for p in raw_paragraphs]
+                avg_size = sum(sizes) / len(sizes) if sizes else 0
+                max_size = max(sizes) if sizes else 0
+                min_size = min(sizes) if sizes else 0
+                median_size = sorted(sizes)[len(sizes)//2] if sizes else 0
+                
+                # Distribuição percentil
+                p25 = sorted(sizes)[int(len(sizes)*0.25)] if sizes else 0
+                p75 = sorted(sizes)[int(len(sizes)*0.75)] if sizes else 0
+                
+                reduction_factor = len(raw_paragraphs) / self.valves.MAX_DEDUP_PARAGRAPHS if self.valves.MAX_DEDUP_PARAGRAPHS > 0 else 0
+                
+                print(f"\n[DEDUP DIAGNÓSTICO]")
+                print(f"  📊 Total chars: {len(raw_context)}")
+                print(f"  📝 Parágrafos: {len(raw_paragraphs)}")
+                print(f"  📈 Tamanho médio: {avg_size:.0f} chars")
+                print(f"  📍 Mediana: {median_size:.0f} chars")
+                print(f"  ⬇️  P25: {p25:.0f} chars")
+                print(f"  ⬆️  P75: {p75:.0f} chars")
+                print(f"  🔸 Min: {min_size:.0f} chars | Max: {max_size:.0f} chars")
+                print(f"  ⚡ Fator redução necessário: {reduction_factor:.1f}x")
+                print(f"  ✅ Redução viável: {'SIM' if avg_size * reduction_factor > 50 else 'ALERTA - Pode ficar muito fragmentado'}")
+                print()
         else:
             deduped_context = raw_context
             await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Deduplicação desabilitada: usando todo o contexto\n")
@@ -6918,17 +6984,6 @@ class Pipe:
                     user_msg, body
                 )
             research_context = self._detected_context
-            
-            # ✅ FIX: Guard against None research_context (can happen if context detection fails)
-            if not research_context or not isinstance(research_context, dict):
-                logger.warning("[SÍNTESE] research_context is None or not a dict, using minimal defaults")
-                research_context = {
-                    "tema_principal": user_msg[:100],
-                    "perfil_descricao": "pesquisa geral",
-                    "estilo": "executivo",
-                    "foco_detalhes": "dados concretos e evidências",
-                    "secoes_sugeridas": ["Resumo", "Principais Descobertas", "Análise Detalhada", "Conclusões"],
-                }
 
             # Extrair KEY_QUESTIONS e RESEARCH_OBJECTIVES do detected_context
             key_questions = research_context.get("key_questions", [])
@@ -7538,7 +7593,6 @@ Retorne APENAS o JSON do contrato no formato:
   "quality_rails": {{"min_unique_domains": 2, "need_official_or_two_independent": true}},
   "budget": {{"max_rounds": 2}}
 }}
-
 INSTRUÇÕES:
 - Extraia o objetivo principal do plano
 - Identifique as fases e seus objetivos

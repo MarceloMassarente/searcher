@@ -5412,6 +5412,24 @@ class GraphNodes:
         }
         await _safe_emit(em, f"[ANALYZE][{correlation_id}] end facts={len(out['facts'])} gaps={len(out['lacunas'])}")
         return out
+    def _calculate_novelty_metrics(self,analysis,state=None):
+        import hashlib
+        def h(s):s=(s or '').strip().lower();return hashlib.sha256(s.encode()).hexdigest()
+        uh=set(state.get('used_claim_hashes',[])or[])if state else set(getattr(self,'used_claim_hashes',[]))
+        ud=set(state.get('used_domains',[])or[])if state else set(getattr(self,'used_domains',[]))
+        fl=analysis.get('facts',[])or[]
+        ch={h(f.get('texto','')if isinstance(f,dict)else str(f))for f in fl}
+        cd=set()
+        for f in fl:
+            if isinstance(f,dict):
+                for e in f.get('evidencias',[])or[]:
+                    u=(e or{}).get('url')or''
+                    try:d=u.split('/')[2]if'/'in u else'';d and cd.add(d)
+                    except:pass
+        nf=len([h for h in ch if h not in uh])
+        nd=len([d for d in cd if d not in ud])
+        return(nf/max(len(ch),1)if ch else 0.0,nd/max(len(cd),1)if cd else 0.0)
+
     async def judge_node(self, state: ResearchState) -> Dict:
         """Judge node - complete implementation with loop count increment and telemetry"""
         correlation_id = state.get('correlation_id', 'unknown')
@@ -6301,7 +6319,9 @@ class Pipe:
             while phase_index < len(phases_to_execute):
                 phase_index += 1
                 ph = phases_to_execute[phase_index - 1]
-                objetivo, q = ph["objetivo"], ph["query_sugerida"]
+                objetivo = ph["objetivo"]
+                # ✅ FIX: Use seed_core (rich query) instead of seed_query (short)
+                q = ph.get("seed_core") or ph.get("seed_query", "")
                 
                 yield f"\n**Fase {phase_index}** – {objetivo}\n"
                 
@@ -7603,54 +7623,4 @@ SCHEMA JSON:
   "detecção_confianca": 0.85,
   "fonte_deteccao": "llm"
 }}"""
-
-            # Ensure LLM components are initialized (handles case with no valves override)
-            if self.analyst is None:
-                self.analyst = AnalystLLM(self.valves)
-            if self.judge is None:
-                self.judge = JudgeLLM(self.valves)
-            if self.planner is None:
-                self.planner = PlannerLLM(self.valves)
-            if self.deduplicator is None:
-                self.deduplicator = Deduplicator(self.valves)
-
-            safe_params = get_safe_llm_params(self.valves.LLM_MODEL, {"temperature": 0.1})
-            
-            result = await _safe_llm_run_with_retry(
-                self.analyst.llm,
-                detect_prompt,
-                safe_params,
-                timeout=self.valves.LLM_TIMEOUT_DEFAULT,
-                max_retries=1,
-            )
-
-            if result and result.get("replies"):
-                try:
-                    contexto_enriquecido = _extract_json_from_text(result["replies"][0])
-                    if contexto_enriquecido:
-                        # Validar campos obrigatórios
-                        required_fields = ["setor_principal", "tipo_pesquisa", "perfil_sugerido"]
-                        if all(field in contexto_enriquecido for field in required_fields):
-                            return contexto_enriquecido
-                except Exception as e:
-                    logger.warning(f"Failed to parse context detection result: {e}")
-
-        except Exception as e:
-            logger.warning(f"Context detection failed: {e}")
-
-        # Fallback: contexto genérico
-        return {
-            "setor_principal": "geral",
-            "tipo_pesquisa": "analise_mercado",
-            "perfil_sugerido": "company_profile",
-            "key_questions": [f"Quais são os principais aspectos de {user_query}?"],
-            "entities_mentioned": [],
-            "research_objectives": [f"Analisar {user_query}"],
-            "perfil_descricao": "análise de mercado",
-            "estilo": "executivo",
-            "foco_detalhes": "dados e métricas",
-            "tema_principal": user_query,
-            "secoes_sugeridas": ["Resumo", "Análise", "Conclusões"],
-            "detecção_confianca": 0.5,
-            "fonte_deteccao": "fallback"
-        }
+</rewritten_file>

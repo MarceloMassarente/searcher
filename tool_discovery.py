@@ -1607,7 +1607,8 @@ class QueryBuilder:
 
     @staticmethod
     def searx_params(base_query: str, language: str = "", country: str = "",
-                     after: "Optional[date]" = None, before: "Optional[date]" = None) -> dict:
+                     after: "Optional[date]" = None, before: "Optional[date]" = None, 
+                     include_date_in_query: bool = False) -> dict:
         from datetime import datetime, date as _date
         import re as _re
         # Normalize after/before if they arrive as ISO strings
@@ -1644,10 +1645,13 @@ class QueryBuilder:
             pass
 
         q_parts = [base_query]
-        if after:
-            q_parts.append(f"after:{after.isoformat()}")
-        if before:
-            q_parts.append(f"before:{before.isoformat()}")
+        # ✅ FIX: Only add after:/before: to query if explicitly requested (for @noticias)
+        # For regular queries, use time_range parameter instead to avoid SearXNG 500 errors
+        if include_date_in_query:
+            if after:
+                q_parts.append(f"after:{after.isoformat()}")
+            if before:
+                q_parts.append(f"before:{before.isoformat()}")
         
         params = {"q": " ".join(q_parts)}
         # Do not pass after/before as separate params; v2 relies on q only
@@ -2940,6 +2944,7 @@ async def _execute_search_plans(
                     country="",
                     after=plan.get("after"),
                     before=plan.get("before"),
+                    include_date_in_query=False  # ✅ Helper function only for non-@noticias
                 )
                 if cats:
                     searxng_params["categories"] = cats
@@ -3503,6 +3508,13 @@ async def discover_urls(
             plans = []
             searxng_plans = [p for p in llm_plans if p.get('engine', 'searxng') == 'searxng']
             
+            # ✅ FIX: Apply time-slicing para @noticias COMPLETO (sem limite)
+            # Estratégia: período <= 120 dias = slicing por MÊS
+            #           período > 120 dias = slicing por TRIMESTRE
+            plans = []
+            searxng_plans = [p for p in llm_plans if p.get('engine', 'searxng') == 'searxng']
+            
+            # Aplicar cada LLM plan a TODOS os time slices (sem limite)
             for llm_plan in searxng_plans:
                 for i, (start, end) in enumerate(slices):
                     # Clone plan and add temporal bounds
@@ -3513,7 +3525,8 @@ async def discover_urls(
                     sliced_plan["slice_id"] = start.isoformat()[:7] if start else None
                     plans.append(sliced_plan)
             
-            logger.info(f"[Planner] Created {len(plans)} time-sliced plans from {len(searxng_plans)} LLM-optimized queries")
+            slicing_mode = "monthly" if delta_days <= 120 else "quarterly"
+            logger.info(f"[Planner] Created {len(plans)} time-sliced plans ({slicing_mode}: {len(searxng_plans)} queries × {len(slices)} slices)")
             
             # Add Exa plan (single global window)
             if current_valves.enable_exa and current_valves.exa_api_key:
@@ -3653,6 +3666,7 @@ async def discover_urls(
                         country=eff_country,
                         after=plan.get("after"),
                         before=plan.get("before"),
+                        include_date_in_query=is_noticias_query  # ✅ FIX: Only add dates to query for @noticias
                     )
                     logger.info(f"[SearXNG] Effective locale → language={eff_lang or 'auto'}, country_bias={eff_country or 'none'} (soft)")
                     if cats:
@@ -4144,7 +4158,7 @@ class Tools:
             time_hint: Dict com recency/strict para controle temporal fino
             lang_bias: Lista de idiomas preferidos (ex: ['pt-BR', 'en'])
             geo_bias: Lista de países/regiões preferidos (ex: ['BR', 'US'])
-            min_domains: Mínimo de domínios únicos desejados nos resultados
+            min_domains: Mínimo de domínios únicos desejados
             official_domains: Lista de domínios oficiais a priorizar
             
             # Opção de retorno (v4.5.1):

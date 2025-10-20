@@ -5309,7 +5309,6 @@ class GraphNodes:
             }
             await _safe_emit(em, f"[REDUCE][{correlation_id}] fail acc={len(accumulated_context)}")
             return out
-    
     async def analyze_node(self, state: ResearchState) -> Dict:
         """Analyze node - complete implementation from Orchestrator._run_analysis"""
         correlation_id = state.get('correlation_id', 'unknown')
@@ -5642,7 +5641,6 @@ class GraphNodes:
                 "loop_count": current_loop + 1,
                 "telemetry_loops": telemetry_loops,
             }
-
 class Pipe:
     """
     Pipe compatível com OpenWebUI - delega ao LangGraph
@@ -6507,6 +6505,9 @@ class Pipe:
                     analyst_proposals=[],
                     final_synthesis=None,
                 )
+
+                # ✅ CRITICAL: Add event emitter to state so all nodes can communicate with chat
+                initial_state["__event_emitter__"] = __event_emitter__
 
                 # ===== EXECUTE GRAPH (LangGraph manages internal loops) =====
                 try:
@@ -7794,7 +7795,6 @@ Analise a consulta e produza:
 - 5-10 key_questions (perguntas de DECISÃO que precisam resposta, não queries de busca)
 - entities_mentioned (APENAS empresas/produtos/pessoas/marcas específicas mencionadas EXPLICITAMENTE, incluir aliases)
 - research_objectives (3-5 objetivos de pesquisa específicos e mensuráveis)
-
 SCHEMA JSON:
 {{
   "setor_principal": "string",

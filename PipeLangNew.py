@@ -6357,7 +6357,9 @@ class Pipe:
                     # The graph will automatically loop discovery→scrape→reduce→analyze→judge
                     # based on the should_continue router decisions
                     try:
-                        final_state = await graph.ainvoke(initial_state)
+                        # LangGraph requires config with thread_id for checkpointer
+                        config = {"configurable": {"thread_id": correlation_id}}
+                        final_state = await graph.ainvoke(initial_state, config=config)
                     except AttributeError as e:
                         if "ainvoke" in str(e):
                             yield f"**[ERRO]** Método ainvoke não disponível no grafo. Verifique instalação do LangGraph\n"

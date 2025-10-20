@@ -2196,6 +2196,8 @@ class AnalystLLM:
         except Exception as e:
             import traceback as _tb
             tb_str = _tb.format_exc()
+            # Ensure correlation_id is available for error context
+            correlation_id = (phase_context or {}).get("correlation_id", "unknown")
             err = PipelineError(
                 stage="analyst",
                 error_type=e.__class__.__name__,
@@ -4738,7 +4740,65 @@ class ResearchStateModel(BaseModel):
 # ============================================================================
 
 # ============================================================================
-# 2. GRAPH BUILDER
+# 2. ROUTER FUNCTION
+# ============================================================================
+
+def should_continue_research(state: ResearchState) -> str:
+    """Robust router with 5 stop conditions"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    
+    # Type coercion - state may contain strings
+    loop_count = state.get('loop_count', 0)
+    if isinstance(loop_count, str):
+        try:
+            loop_count = int(loop_count)
+        except ValueError:
+            logger.error(f"[ROUTER][{correlation_id}] Invalid loop_count type: {type(loop_count)}, defaulting to 0")
+            loop_count = 0
+
+    max_loops = state.get('max_loops', 3)
+    if isinstance(max_loops, str):
+        try:
+            max_loops = int(max_loops)
+        except ValueError:
+            logger.warning(f"[ROUTER][{correlation_id}] Invalid max_loops type: {type(max_loops)}, defaulting to 3")
+            max_loops = 3
+            
+    verdict = state.get('verdict', 'done')
+    
+    # Debug state validation (only if VERBOSE_DEBUG)
+    if logger.level <= 10:  # DEBUG level
+        logger.debug(f"[ROUTER][{correlation_id}] State check:")
+        logger.debug(f"  loop_count={loop_count} (type: {type(loop_count)})")
+        logger.debug(f"  max_loops={max_loops} (type: {type(max_loops)})")
+        logger.debug(f"  verdict={verdict}")
+    
+    # Priority 1: Max loops exceeded
+    if loop_count >= max_loops:
+        logger.warning(f"[ROUTER][{correlation_id}] Max loops reached ({loop_count}/{max_loops}) - forcing DONE")
+        return END
+    
+    # Priority 2: Judge decided DONE
+    if verdict == "done":
+        logger.info(f"[ROUTER][{correlation_id}] Judge decided DONE after {loop_count} loops")
+        return END
+    
+    # Priority 3: Failed query
+    if state.get('failed_query', False):
+        logger.warning(f"[ROUTER][{correlation_id}] Query failed - forcing DONE")
+        return END
+    
+    # Priority 4: Diminishing returns
+    if state.get('diminishing_returns', False):
+        logger.warning(f"[ROUTER][{correlation_id}] Diminishing returns detected - forcing DONE")
+        return END
+    
+    # Priority 5: Continue iteration
+    logger.info(f"[ROUTER][{correlation_id}] Continuing loop {loop_count + 1}/{max_loops} (verdict={verdict})")
+    return "discovery"
+
+# ============================================================================
+# 3. GRAPH BUILDER
 # ============================================================================
 
 def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
@@ -4762,7 +4822,7 @@ def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_t
     workflow.add_edge("scrape", "reduce")
     workflow.add_edge("reduce", "analyze")
     workflow.add_edge("analyze", "judge")
-    workflow.add_conditional_edges("judge", lambda s: "discovery" if s.get("verdict") != "done" else END)
+    workflow.add_conditional_edges("judge", should_continue_research)
     
     memory = MemorySaver()
     return workflow.compile(checkpointer=memory)
@@ -4779,6 +4839,34 @@ class GraphNodes:
         self.analyst = AnalystLLM(self.valves)
         self.judge = JudgeLLM(self.valves)
         self.deduplicator = Deduplicator(self.valves)
+    
+    def _calculate_novelty_metrics(self, analysis, state=None):
+        """Calculate novelty metrics based on used hashes and domains"""
+        import hashlib
+        def h(s):
+            s = (s or '').strip().lower()
+            return hashlib.sha256(s.encode()).hexdigest()
+        
+        uh = set(state.get('used_claim_hashes', []) or []) if state else set(getattr(self, 'used_claim_hashes', []))
+        ud = set(state.get('used_domains', []) or []) if state else set(getattr(self, 'used_domains', []))
+        fl = analysis.get('facts', []) or []
+        ch = {h(f.get('texto', '') if isinstance(f, dict) else str(f)) for f in fl}
+        cd = set()
+        
+        for f in fl:
+            if isinstance(f, dict):
+                for e in f.get('evidencias', []) or []:
+                    u = (e or {}).get('url') or ''
+                    try:
+                        d = u.split('/')[2] if '/' in u else ''
+                        if d:
+                            cd.add(d)
+                    except:
+                        pass
+        
+        nf = len([h for h in ch if h not in uh])
+        nd = len([d for d in cd if d not in ud])
+        return (nf / max(len(ch), 1) if ch else 0.0, nd / max(len(cd), 1) if cd else 0.0)
     
     async def discovery_node(self, state: ResearchState) -> Dict:
         """Discovery node - complete implementation from Orchestrator._run_discovery"""
@@ -5333,6 +5421,18 @@ class GraphNodes:
             accumulated_context=analyst_context,
             phase_context=phase_context,
         )
+        # Emit live update to chat with brief analyst results
+        try:
+            facts_ct = len(analysis.get('facts', [])) if isinstance(analysis, dict) else 0
+            lac_ct = len(analysis.get('lacunas', [])) if isinstance(analysis, dict) else 0
+            sum_preview = ''
+            if isinstance(analysis, dict):
+                sum_preview = (analysis.get('summary', '') or '')[:200]
+            await _safe_emit(em, f"[ANALYST][{correlation_id}] facts={facts_ct} lacunas={lac_ct}")
+            if sum_preview:
+                await _safe_emit(em, f"Resumo: {sum_preview}…")
+        except Exception:
+            pass
         
         # Validar resultado
         if not isinstance(analysis, dict):
@@ -5482,6 +5582,16 @@ class GraphNodes:
             # Increment loop count
             new_loop_count = current_loop + 1
             
+            # Validate increment happened
+            if new_loop_count <= current_loop:
+                logger.error(f"[JUDGE][{correlation_id}] CRITICAL: loop_count not incrementing! current={current_loop}, new={new_loop_count}")
+                # Force increment as failsafe
+                new_loop_count = current_loop + 1
+
+            # Debug log increment
+            if self.valves.VERBOSE_DEBUG:
+                logger.info(f"[JUDGE][{correlation_id}] Loop increment: {current_loop} → {new_loop_count}")
+            
             out = {
                 "judgement": judgement,
                 "verdict": judgement.get("verdict", "done"),
@@ -5505,6 +5615,15 @@ class GraphNodes:
                 },
                 reason="judge_result",
             )
+            # Add debug logging before final emit
+            if self.valves.VERBOSE_DEBUG:
+                logger.info(f"[JUDGE][{correlation_id}] State after decision:")
+                logger.info(f"  - loop_count: {new_loop_count}/{state.get('max_loops', 3)}")
+                logger.info(f"  - verdict: {out.get('verdict')}")
+                logger.info(f"  - phase_score: {out.get('phase_score')}")
+                logger.info(f"  - failed_query: {state.get('failed_query', False)}")
+                logger.info(f"  - diminishing_returns: {state.get('diminishing_returns', False)}")
+            
             await _safe_emit(em, f"[JUDGE][{correlation_id}] end verdict={out['verdict']} score={out['phase_score']}")
             return out
         except Exception as e:
@@ -6400,6 +6519,14 @@ class Pipe:
                         # LangGraph requires config with thread_id for checkpointer
                         config = {"configurable": {"thread_id": correlation_id}}
                         final_state = await graph.ainvoke(initial_state, config=config)
+                        
+                        # Validate graph execution state
+                        final_loop_count = final_state.get("loop_count", 0)
+                        if final_loop_count == 0:
+                            logger.error(f"[PIPE][{correlation_id}] CRITICAL: loop_count not incremented by graph!")
+                        elif self.valves.VERBOSE_DEBUG:
+                            logger.info(f"[PIPE][{correlation_id}] Graph completed: {final_loop_count} loops, verdict={final_state.get('verdict')}")
+                            
                     except AttributeError as e:
                         if "ainvoke" in str(e):
                             yield f"**[ERRO]** Método ainvoke não disponível no grafo. Verifique instalação do LangGraph\n"
@@ -6563,9 +6690,10 @@ class Pipe:
                 if global_state and "accumulated_context" in global_state:
                     accumulated_context = global_state["accumulated_context"]
                 elif phase_results:
-                    # Fallback: get from last phase result
-                    last_result = phase_results[-1].get("result", {})
-                    accumulated_context = last_result.get("accumulated_context", "")
+                    # Fallback: get from last phase result (guard against None entries)
+                    last_phase = next((p for p in reversed(phase_results) if isinstance(p, dict)), {})
+                    last_result = last_phase.get("result", {}) if isinstance(last_phase, dict) else {}
+                    accumulated_context = (last_result or {}).get("accumulated_context", "")
                 
                 if not accumulated_context:
                     await _safe_emit(__event_emitter__, "**[INFO]** Nenhum contexto acumulado disponível\n")
@@ -6611,9 +6739,10 @@ class Pipe:
                     if global_state and "scraped_cache" in global_state:
                         scraped_cache = global_state["scraped_cache"]
                     elif phase_results:
-                        # Fallback: get from last phase result
-                        last_result = phase_results[-1].get("result", {})
-                        scraped_cache = last_result.get("scraped_cache", {})
+                        # Fallback: get from last phase result (guard against None entries)
+                        last_phase = next((p for p in reversed(phase_results) if isinstance(p, dict)), {})
+                        last_result = last_phase.get("result", {}) if isinstance(last_phase, dict) else {}
+                        scraped_cache = (last_result or {}).get("scraped_cache", {})
                     
                     total_urls = len(scraped_cache)
                     total_phases = len(phase_results)
@@ -6739,11 +6868,13 @@ class Pipe:
         if global_state and "accumulated_context" in global_state:
             raw_context = global_state["accumulated_context"]
         elif phase_results:
-            # Fallback: get from last phase result
-            last_result = phase_results[-1].get("result", {})
-            raw_context = last_result.get("accumulated_context", "")
+            # Fallback: get from last phase result (guard against None entries)
+            last_phase = next((p for p in reversed(phase_results) if isinstance(p, dict)), {})
+            last_result = last_phase.get("result", {}) if isinstance(last_phase, dict) else {}
+            raw_context = (last_result or {}).get("accumulated_context", "")
         
         if not raw_context:
+            await _safe_emit(__event_emitter__, "**[INFO]** Nenhum contexto disponível para síntese\n")
             yield "**[INFO]** Nenhum contexto disponível para síntese\n"
             return
         
@@ -6838,9 +6969,10 @@ class Pipe:
             if global_state and "scraped_cache" in global_state:
                 scraped_cache = global_state["scraped_cache"]
             elif phase_results:
-                # Fallback: get from last phase result
-                last_result = phase_results[-1].get("result", {})
-                scraped_cache = last_result.get("scraped_cache", {})
+                # Fallback: get from last phase result (guard against None entries)
+                last_phase = next((p for p in reversed(phase_results) if isinstance(p, dict)), {})
+                last_result = last_phase.get("result", {}) if isinstance(last_phase, dict) else {}
+                scraped_cache = (last_result or {}).get("scraped_cache", {})
             
             total_urls = len(scraped_cache)
             total_phases = len(phase_results)
@@ -6866,6 +6998,10 @@ class Pipe:
 
             hints_lines = []
             for idx, ph in enumerate(phase_results, 1):
+                # Guard against None entries in phase_results
+                if not isinstance(ph, dict):
+                    continue
+                    
                 analysis = ph.get("analysis", {}) or {}
                 summary = (analysis.get("summary") or "").strip()
                 facts = analysis.get("facts", []) or []
@@ -7132,9 +7268,10 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             if global_state and "scraped_cache" in global_state:
                 scraped_cache = global_state["scraped_cache"]
             elif phase_results:
-                # Fallback: get from last phase result
-                last_result = phase_results[-1].get("result", {})
-                scraped_cache = last_result.get("scraped_cache", {})
+                # Fallback: get from last phase result (guard against None entries)
+                last_phase = next((p for p in reversed(phase_results) if isinstance(p, dict)), {})
+                last_result = last_phase.get("result", {}) if isinstance(last_phase, dict) else {}
+                scraped_cache = (last_result or {}).get("scraped_cache", {})
             
             total_urls = len(scraped_cache)
             total_phases = len(phase_results)
@@ -7312,6 +7449,15 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             if time_hint:
                 after = time_hint.get("after")
                 before = time_hint.get("before")
+                # Keep time_hint for passing to discovery tool (like PipeHaystack)
+            
+            # Validate date parameters - ensure they are ISO strings or None
+            if after and not isinstance(after, str):
+                logger.warning(f"[D_WRAPPER] Invalid after parameter type: {type(after)}, converting to string")
+                after = str(after)
+            if before and not isinstance(before, str):
+                logger.warning(f"[D_WRAPPER] Invalid before parameter type: {type(before)}, converting to string")
+                before = str(before)
 
             # Build kwargs dynamically based on the callable's supported parameters
             import inspect
@@ -7374,6 +7520,48 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             if not final_kwargs.get("query"):
                 logger.error("[D_WRAPPER] Query is empty!")
                 return {"urls": []}
+            
+            # PATCH: Propagar configs do Pipe para Discovery Tool (like PipeHaystack)
+            # Alinha timeouts, retries e outras configs para evitar falhas em cascata
+            if "request_timeout" in supported_params:
+                final_kwargs["request_timeout"] = self.valves.LLM_TIMEOUT_DEFAULT
+                if getattr(self.valves, "VERBOSE_DEBUG", False):
+                    print(f"[DEBUG][D_WRAPPER] Setting request_timeout={self.valves.LLM_TIMEOUT_DEFAULT}s")
+
+            if "max_retries" in supported_params:
+                max_retries = getattr(self.valves, "LLM_MAX_RETRIES", 3)
+                final_kwargs["max_retries"] = max_retries
+                if getattr(self.valves, "VERBOSE_DEBUG", False):
+                    print(f"[DEBUG][D_WRAPPER] Setting max_retries={max_retries}")
+
+            if "llm_timeout" in supported_params:
+                final_kwargs["llm_timeout"] = self.valves.LLM_TIMEOUT_DEFAULT
+
+            # Propagar model se discovery tool suportar
+            if "llm_model" in supported_params:
+                final_kwargs["llm_model"] = self.valves.LLM_MODEL
+                if getattr(self.valves, "VERBOSE_DEBUG", False):
+                    print(f"[DEBUG][D_WRAPPER] Setting llm_model={self.valves.LLM_MODEL}")
+
+            # Propagar limite de páginas se configurado
+            if "pages_per_slice" in supported_params:
+                pages_per_slice = getattr(self.valves, "DISCOVERY_PAGES_PER_SLICE", 2)
+                final_kwargs["pages_per_slice"] = pages_per_slice
+
+            # PATCH v4.5.1: Solicitar retorno como dict (evita json.dumps/loads overhead)
+            if "return_dict" in supported_params:
+                final_kwargs["return_dict"] = True
+                if getattr(self.valves, "VERBOSE_DEBUG", False):
+                    print(f"[DEBUG][D_WRAPPER] Requesting dict return (eliminates JSON parse overhead)")
+            
+            # Debug logging for parameter validation
+            if getattr(self.valves, "VERBOSE_DEBUG", False):
+                print(f"[DEBUG][D_WRAPPER] Calling discovery tool with params: {list(final_kwargs.keys())}")
+                print(f"[DEBUG][D_WRAPPER] Query: '{final_kwargs.get('query', 'N/A')}'")
+                print(f"[DEBUG][D_WRAPPER] Profile: {final_kwargs.get('profile', 'N/A')}")
+                print(f"[DEBUG][D_WRAPPER] Must terms: {final_kwargs.get('must_terms', 'N/A')}")
+                print(f"[DEBUG][D_WRAPPER] After: {after}, Before: {before}")
+                print(f"[DEBUG][D_WRAPPER] Time hint: {time_hint}")
 
             # ===== GRACEFUL DEGRADATION WITH FALLBACK =====
             try:
@@ -7623,4 +7811,20 @@ SCHEMA JSON:
   "detecção_confianca": 0.85,
   "fonte_deteccao": "llm"
 }}"""
-</rewritten_file>
+        except Exception as e:
+            logger.error(f'[ProfileDetector] Error: {e}')
+            return {
+                'setor_principal': 'geral',
+                'tipo_pesquisa': 'geral',
+                'perfil_sugerido': 'company_profile',
+                'key_questions': [],
+                'entities_mentioned': [],
+                'research_objectives': [],
+                'perfil_descricao': 'Perfil padrão',
+                'estilo': 'investigativo',
+                'foco_detalhes': 'amplo',
+                'tema_principal': 'geral',
+                'secoes_sugeridas': [],
+                'detecção_confianca': 0.0,
+                'fonte_deteccao': 'error'
+            }

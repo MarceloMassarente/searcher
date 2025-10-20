@@ -210,8 +210,99 @@ class LLMCircuitBreaker:
             "can_execute": self.can_execute()
         }
 
-# Global circuit breaker instance
+# Global circuit breaker instances
 _llm_circuit_breaker = LLMCircuitBreaker()
+
+class SearxngCircuitBreaker:
+    """
+    Circuit breaker específico para SearXNG com detecção de falhas 500.
+    
+    Funciona como um "fusível" que abre quando há muitas falhas 500 consecutivas,
+    evitando chamadas desnecessárias ao SearXNG quando está instável.
+    """
+    
+    def __init__(self, max_failures: int = 3, timeout: int = 300, reset_time: int = 600):
+        self.max_failures = max_failures
+        self.timeout = timeout
+        self.base_reset_time = reset_time
+        self.reset_time = reset_time
+        
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        
+        # Exponential backoff fields
+        self.consecutive_half_open_failures = 0
+        self.backoff_multiplier = 1.0
+        self.max_backoff_multiplier = 4.0  # Max 40min (10min * 4)
+        
+    def can_execute(self) -> bool:
+        """Verifica se pode executar busca no SearXNG."""
+        if self.state == "CLOSED":
+            return True
+        
+        if self.state == "OPEN":
+            # Verificar se passou tempo suficiente para tentar reset
+            if self.last_failure_time and (time.time() - self.last_failure_time) > self.reset_time:
+                self.state = "HALF_OPEN"
+                logger.info(f"[SearxngCircuitBreaker] State changed to HALF_OPEN - attempting reset (backoff: {self.reset_time}s)")
+                return True
+            return False
+        
+        if self.state == "HALF_OPEN":
+            return True
+        
+        return False
+    
+    def record_success(self):
+        """Registra sucesso e reseta o circuit breaker."""
+        if self.state == "HALF_OPEN":
+            self.state = "CLOSED"
+            self.failure_count = 0
+            self.consecutive_half_open_failures = 0
+            self.backoff_multiplier = 1.0
+            logger.info("[SearxngCircuitBreaker] Reset successful - state changed to CLOSED, backoff reset")
+    
+    def record_failure(self, error: Exception, status_code: int = None):
+        """Registra falha e atualiza estado do circuit breaker."""
+        # Só conta falhas 500 como "reais" para o circuit breaker
+        if status_code and status_code != 500:
+            return
+            
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        
+        # Track failures in HALF_OPEN state for exponential backoff
+        if self.state == "HALF_OPEN":
+            self.consecutive_half_open_failures += 1
+            
+            # Apply exponential backoff after repeated HALF_OPEN failures
+            if self.consecutive_half_open_failures >= 2:
+                self.backoff_multiplier = min(self.backoff_multiplier * 2, self.max_backoff_multiplier)
+                self.reset_time = int(self.base_reset_time * self.backoff_multiplier)
+                logger.warning(
+                    f"[SearxngCircuitBreaker] HALF_OPEN failure #{self.consecutive_half_open_failures} - "
+                    f"increasing backoff to {self.reset_time}s (multiplier: {self.backoff_multiplier}x)"
+                )
+        
+        logger.warning(f"[SearxngCircuitBreaker] Failure {self.failure_count}/{self.max_failures}: {error} (status: {status_code})")
+        
+        if self.failure_count >= self.max_failures:
+            self.state = "OPEN"
+            logger.error(f"[SearxngCircuitBreaker] Circuit opened after {self.failure_count} failures - SearXNG calls disabled for {self.reset_time}s")
+    
+    def get_state_info(self) -> Dict[str, Any]:
+        """Retorna informações do estado atual."""
+        return {
+            "state": self.state,
+            "failure_count": self.failure_count,
+            "last_failure_time": self.last_failure_time,
+            "can_execute": self.can_execute(),
+            "reset_time": self.reset_time
+        }
+
+# Global SearXNG circuit breaker instance
+_searxng_circuit_breaker = SearxngCircuitBreaker()
 _CACHE_LOCK = threading.Lock()
 
 def _get_cached_openai_client(api_key: str, base_url: str) -> Any:
@@ -288,6 +379,11 @@ class DiscoveryConfig(BaseModel):
     
     # Debug settings
     enable_debug_logging: bool = Field(default=False, description="Enable verbose debug logging")
+    
+    # Circuit breaker settings
+    enable_searxng_circuit_breaker: bool = Field(default=True, description="Enable SearXNG circuit breaker for 500 errors")
+    searxng_circuit_breaker_max_failures: int = Field(default=3, description="Max consecutive 500 errors before disabling SearXNG")
+    searxng_circuit_breaker_reset_time: int = Field(default=600, description="Time in seconds before attempting to reset SearXNG circuit breaker")
 
 class UrlCandidate(BaseModel):
     """Candidato de URL com metadados"""
@@ -1177,6 +1273,14 @@ class RunnerSearxng:
         self.base = endpoint.rstrip('/')
         if not self.base.endswith('/search'):
             self.base = f"{self.base}/search"
+        
+        # Initialize circuit breaker with config values
+        if valves.enable_searxng_circuit_breaker:
+            global _searxng_circuit_breaker
+            _searxng_circuit_breaker = SearxngCircuitBreaker(
+                max_failures=valves.searxng_circuit_breaker_max_failures,
+                reset_time=valves.searxng_circuit_breaker_reset_time
+            )
     
     def _get_api_url(self) -> str:
         """Get the normalized API URL"""
@@ -1185,6 +1289,11 @@ class RunnerSearxng:
     async def run(self, params: dict, max_pages: int = 2) -> List[dict]:
         """Executa busca no SearXNG com paginação e retry inteligente"""
         if not self.endpoint:
+            return []
+        
+        # Check circuit breaker before attempting search (if enabled)
+        if self.valves.enable_searxng_circuit_breaker and not _searxng_circuit_breaker.can_execute():
+            logger.warning(f"[SearXNG] Circuit breaker OPEN - skipping search (state: {_searxng_circuit_breaker.get_state_info()})")
             return []
         
         all_results = []
@@ -1208,6 +1317,14 @@ class RunnerSearxng:
                     async with session.get(url, params=page_params, headers=headers) as response:
                         if response.status != 200:
                             logger.warning(f"[SearXNG] Status {response.status} for page {page}")
+                            
+                            # Record failure in circuit breaker for 500 errors
+                            if response.status == 500:
+                                _searxng_circuit_breaker.record_failure(
+                                    Exception(f"HTTP {response.status}"), 
+                                    status_code=response.status
+                                )
+                            
                             # Stop pagination on 400 (bad query)
                             if response.status == 400:
                                 break
@@ -1219,6 +1336,9 @@ class RunnerSearxng:
                         if 'application/json' in content_type:
                             data = await response.json()
                             results = data.get("results", [])
+                            
+                            # Record success in circuit breaker (any successful response)
+                            _searxng_circuit_breaker.record_success()
                             
                             # DEBUG: Log detalhado se 0 resultados
                             if not results and page == 1:
@@ -1581,8 +1701,19 @@ class QueryBuilder:
             s = re.sub(r"(?i)\b(noticias?|notícias?|lançamentos?|produtos?|outros?)\b[:]?", " ", s)
         except Exception:
             pass
+        # ✅ FIX: Remove temporal keywords that confuse SearXNG
+        try:
+            s = re.sub(r"(?i)\b(últimos?|último|recentes?|atuais?|novos?|últimas?)\b", " ", s)
+        except Exception:
+            pass
         # Collapse whitespace again and strip
         s = re.sub(r"\s+", " ", s).strip()
+        # ✅ FIX: Normalize Portuguese accents to ASCII for SearXNG compatibility
+        import unicodedata
+        try:
+            s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+        except Exception:
+            pass
         return s
 
     @staticmethod
@@ -1593,6 +1724,14 @@ class QueryBuilder:
         
         # Apply basic sanitization
         sanitized = QueryBuilder.sanitize(q)
+        
+        # ✅ FIX: Limitar a 5 termos principais para SearXNG (densidade máxima)
+        # SearXNG falha com queries muito densas/longas em português
+        words = sanitized.split()
+        if len(words) > 5:
+            # Manter os 5 termos mais importantes (primeiros termos tendem a ser mais relevantes)
+            logger.warning(f"[QueryBuilder] Query muito densa ({len(words)} termos), reduzindo para 5")
+            sanitized = " ".join(words[:5])
         
         # Truncate if necessary
         if len(sanitized) > max_length:
@@ -1611,6 +1750,8 @@ class QueryBuilder:
                      include_date_in_query: bool = False) -> dict:
         from datetime import datetime, date as _date
         import re as _re
+        
+        # ✅ SIMPLIFIED: Use v2 approach - minimal params, avoid complex transformations
         # Normalize after/before if they arrive as ISO strings
         if isinstance(after, str):
             try:
@@ -1623,45 +1764,29 @@ class QueryBuilder:
             except Exception:
                 before = None
         
-        # Build query with temporal filters
-        # Ensure base_query has no trailing punctuation that could confuse engines
-        try:
-            base_query = _re.sub(r"[\s,;:]+$", "", base_query or "")
-            # Remove any user-provided after:/before: tokens to avoid duplication
-            base_query = _re.sub(r"(?i)\bafter:\d{4}-\d{2}-\d{2}\b", " ", base_query)
-            base_query = _re.sub(r"(?i)\bbefore:\d{4}-\d{2}-\d{2}\b", " ", base_query)
-            base_query = _re.sub(r"\s+", " ", base_query).strip()
-        except Exception:
-            base_query = (base_query or "").strip()
-        # Append negative keywords for @noticias to reduce irrelevant trending topics
-        try:
-            from typing import Any
-            # Heuristic: if original query contains '@noticias', add negatives
-            # We cannot access the full valves here, so we use a conservative default aligned with valves default
-            if "@noticias" in (base_query or "").lower():
-                negatives = "-Bolsonaro -Trump -futebol -celebridade"
-                base_query = f"{base_query} {negatives}".strip()
-        except Exception:
-            pass
-
-        q_parts = [base_query]
-        # ✅ FIX: Only add after:/before: to query if explicitly requested (for @noticias)
-        # For regular queries, use time_range parameter instead to avoid SearXNG 500 errors
-        if include_date_in_query:
-            if after:
-                q_parts.append(f"after:{after.isoformat()}")
-            if before:
-                q_parts.append(f"before:{before.isoformat()}")
+        # Build a simple, clean query string (no complex sanitization)
+        q_parts: List[str] = []
+        if base_query:
+            q_parts.append(base_query.strip())
         
-        params = {"q": " ".join(q_parts)}
-        # Do not pass after/before as separate params; v2 relies on q only
+        # Add date hints into query (v2 approach - simple and works)
+        if after:
+            q_parts.append(f"after:{after.isoformat()}")
+        if before:
+            q_parts.append(f"before:{before.isoformat()}")
+        
+        params = {
+            "q": " ".join(q_parts),
+            "format": "json",
+        }
+        
+        # Optionally pass language if provided (simple type)
         if language:
             params["language"] = language
-        # country is kept for telemetry; do not force cc. Avoid misusing safesearch as country.
         
-        # Set approximate time_range for SearXNG engines that don't support after/before in q
-        if after or before:
-            try:
+        # Set approximate time_range for SearXNG (like v2)
+        try:
+            if after or before:
                 if after and before:
                     # Calculate approximate time range based on date span
                     delta = abs((before - after).days)
@@ -1672,7 +1797,7 @@ class QueryBuilder:
                     elif delta <= 365:
                         params["time_range"] = "year"
                     else:
-                        params["time_range"] = "year"  # Default to year for longer spans
+                        params["time_range"] = "year"
                 elif after:
                     # Only after date - assume recent content
                     delta = abs((_date.today() - after).days)
@@ -1691,9 +1816,13 @@ class QueryBuilder:
                         params["time_range"] = "month"
                     else:
                         params["time_range"] = "year"
-                logger.debug(f"[QueryBuilder] Temporal query: after={after}, before={before}, time_range={params.get('time_range')}")
-            except Exception as e:
-                logger.warning(f"[QueryBuilder] Error calculating time_range: {e}")
+        except Exception:
+            pass
+        
+        # Log for debugging
+        logger.info(f"[QueryBuilder] Final SearXNG payload: {params}")
+        logger.info(f"[QueryBuilder] Query length: {len(params.get('q', ''))} chars")
+        logger.info(f"[QueryBuilder] Parameters: {list(params.keys())}")
         
         return params
 
@@ -1793,14 +1922,14 @@ class QueryClassifier:
 # SEÇÃO 7: ORQUESTRAÇÃO E LÓGICA DE IA (IMPLEMENTAÇÕES ORIGINAIS)
 # =============================================================================
 
-async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any], 
+def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any], 
                                   messages: Optional[List[Dict]] = None, 
                                   language: str = "", 
                                   __event_emitter__: Optional[Callable] = None, 
                                   valves: Optional[Any] = None) -> List[Dict[str, Any]]:
     """Gera queries otimizadas usando LLM"""
     # Check OpenAI availability and API key (like tool_discovery_v2)
-    if not OPENAI_AVAILABLE or AsyncOpenAI is None:
+    if not OPENAI_AVAILABLE or OpenAI is None:
         raise RuntimeError("LLM planner required but OpenAI library is not available")
     
     # Use valves if provided, otherwise fallback to env vars (like tool_discovery_v2)
@@ -1822,7 +1951,8 @@ async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any],
     try:
         base_url = _safe_get_valve(valves, "openai_base_url", "https://api.openai.com/v1")
         
-        client = AsyncOpenAI(
+        # ✅ FIX: Use synchronous OpenAI client (like v2, not AsyncOpenAI)
+        client = OpenAI(
             api_key=api_key,
             base_url=base_url
         )
@@ -2082,7 +2212,8 @@ Retorne APENAS JSON:"""
         logger.info(f"[LLM Planner] Using model: {model}, timeout: {planner_timeout}s")
         
         try:
-            response = await client.chat.completions.create(
+            # ✅ FIX: Use synchronous call (not await) like v2
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=1.0,  # gpt-5-mini only supports default temperature (1.0)
@@ -2118,7 +2249,15 @@ Retorne APENAS JSON:"""
                 _log_plan_metadata(valid_plans, pipe_must_terms)
             
             if __event_emitter__:
-                await safe_emit(__event_emitter__, f"LLM gerou {len(valid_plans)} variações de query válidas")
+                # ✅ FIX: Remove await since function is now synchronous
+                try:
+                    if asyncio.iscoroutinefunction(__event_emitter__):
+                        # Schedule async emitter in background if one exists
+                        pass
+                    else:
+                        __event_emitter__(f"LLM gerou {len(valid_plans)} variações de query válidas")
+                except Exception:
+                    pass
             
             return valid_plans
             
@@ -3405,12 +3544,20 @@ async def discover_urls(
         }
         logger.info(f"[Discovery][Rails] received: {rails_log}")
         
-        # Detect @noticias and automatically set profile to "news"
-        is_noticias_query = "@noticias" in query.lower()
-        logger.info(f"[Discovery] Query: '{query}', is_noticias_query: {is_noticias_query}, profile: {profile}")
-        if is_noticias_query:
-            logger.info("[Discovery] @noticias detected - forcing profile to 'news'")
-            profile = "news"
+        # Detect news-mode queries and automatically set profile to "news"
+        # Criteria: explicit token @noticias OR news keywords OR intent_profile.news_mode
+        try:
+            is_news_by_text = QueryClassifier.is_news_profile_active(query)
+        except Exception:
+            is_news_by_text = False
+        is_news_mode = bool(intent_profile.get("news_mode", False))
+        is_noticias_query = ("@noticias" in query.lower())
+        is_news_active = is_noticias_query or is_news_by_text or is_news_mode
+        logger.info(f"[Discovery] Query: '{query}', news_active: {is_news_active}, profile: {profile}")
+        if is_news_active:
+            if profile != "news":
+                logger.info("[Discovery] News mode detected - forcing profile to 'news'")
+                profile = "news"
             if "news_mode" not in intent_profile:
                 intent_profile["news_mode"] = True
         
@@ -3430,6 +3577,31 @@ async def discover_urls(
             valves=current_valves
         )
         
+        # Validate and normalize plans (ensure engine / core_query)
+        def _validate_plans(pls: List[Dict]) -> List[Dict]:
+            valid: List[Dict] = []
+            for i, p in enumerate(pls or []):
+                if not isinstance(p, dict):
+                    logger.error(f"[Planner] Plan {i+1} inválido (não-dict): {type(p)}")
+                    continue
+                core = p.get("core_query")
+                if not core or not isinstance(core, str) or not core.strip():
+                    logger.error(f"[Planner] Plan {i+1} sem core_query, descartando")
+                    continue
+                eng = p.get("engine") or "searxng"
+                if eng not in ("searxng", "exa"):
+                    logger.warning(f"[Planner] Plan {i+1} engine inválido '{eng}', corrigindo para 'searxng'")
+                    eng = "searxng"
+                p["engine"] = eng
+                valid.append(p)
+            if not valid:
+                logger.warning("[Planner] Nenhum plan válido após validação")
+            else:
+                logger.info(f"[Planner] Validated {len(valid)} plans with engines: {[p.get('engine') for p in valid]}")
+            return valid
+
+        llm_plans = _validate_plans(llm_plans)
+
         # Apply time slicing for @noticias queries
         if is_noticias_query and profile == "news":
             logger.info("[Planner] Applying time slicing to LLM-optimized queries")
@@ -3666,42 +3838,14 @@ async def discover_urls(
                         country=eff_country,
                         after=plan.get("after"),
                         before=plan.get("before"),
-                        include_date_in_query=is_noticias_query  # ✅ FIX: Only add dates to query for @noticias
+                        include_date_in_query=is_news_active  # ✅ Add dates to query for any news-mode
                     )
                     logger.info(f"[SearXNG] Effective locale → language={eff_lang or 'auto'}, country_bias={eff_country or 'none'} (soft)")
                     if cats:
                         searxng_params["categories"] = cats
                     # Always request JSON explicitly
                     searxng_params["format"] = "json"
-                    # Enforce time_range based on slice delta like Discovery v2
-                    try:
-                        a, b = plan.get("after"), plan.get("before")
-                        if a and b:
-                            from datetime import date as _date
-                            if isinstance(a, str):
-                                from datetime import date as _d
-                                try:
-                                    a = _d.fromisoformat(a)
-                                except Exception:
-                                    a = None
-                            if isinstance(b, str):
-                                from datetime import date as _d
-                                try:
-                                    b = _d.fromisoformat(b)
-                                except Exception:
-                                    b = None
-                            if a and b:
-                                delta = abs((b - a).days)
-                                if delta <= 7:
-                                    searxng_params["time_range"] = "week"
-                                elif delta <= 31:
-                                    searxng_params["time_range"] = "month"
-                                elif delta <= 365:
-                                    searxng_params["time_range"] = "year"
-                                else:
-                                    searxng_params["time_range"] = "year"
-                    except Exception:
-                        pass
+                    # Do NOT enforce time_range for general queries; only news-mode handles temporal hints
                     
                     # Log query details with full params
                     logger.info(f"[SearXNG] Query: {plan_query}")

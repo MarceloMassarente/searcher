@@ -4733,7 +4733,8 @@ class ResearchStateModel(BaseModel):
 def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
     """Builds and compiles the research LangGraph workflow."""
     if not LANGGRAPH_AVAILABLE:
-        raise ImportError("LangGraph not available. Install: pip install langgraph>=0.3.5")
+        logger.warning("[LangGraph] LangGraph não está disponível. Instale: pip install langgraph")
+        return None
     
     workflow = StateGraph(ResearchState)
     nodes = GraphNodes(valves, discovery_tool, scraper_tool, context_reducer_tool)
@@ -4754,9 +4755,6 @@ def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_t
     
     memory = MemorySaver()
     return workflow.compile(checkpointer=memory)
-
-
-
 class GraphNodes:
     """Wrappers FINOS - delegam para código existente (ex-Orchestrator)"""
     
@@ -6194,6 +6192,33 @@ class Pipe:
             # Check if LangGraph is available and working
             if not LANGGRAPH_AVAILABLE:
                 yield "**[ERRO]** LangGraph não está disponível. Instale: pip install langgraph\n"
+                
+                # Debug: Try to detect why
+                yield "\n**[DEBUG]** Verificando instalação do LangGraph...\n"
+                
+                try:
+                    import langgraph
+                    version = getattr(langgraph, '__version__', 'unknown')
+                    yield f"- ✅ langgraph importado: versão {version}\n"
+                except ImportError as e:
+                    yield f"- ❌ langgraph não pode ser importado: {e}\n"
+                
+                try:
+                    from langgraph.graph import StateGraph
+                    yield f"- ✅ StateGraph importado com sucesso\n"
+                except ImportError as e:
+                    yield f"- ❌ StateGraph não pode ser importado: {e}\n"
+                
+                try:
+                    from langgraph.checkpoint.memory import MemorySaver
+                    yield f"- ✅ MemorySaver importado com sucesso\n"
+                except ImportError as e:
+                    yield f"- ❌ MemorySaver não pode ser importado: {e}\n"
+                
+                yield "\n**[SOLUÇÃO]** Execute no terminal:\n"
+                yield "```bash\n"
+                yield "pip install langgraph>=0.3.5 --upgrade\n"
+                yield "```\n"
                 return
 
             try:

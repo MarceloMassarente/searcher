@@ -369,23 +369,7 @@ class PlannerPhaseModel(BaseModel):
         description="Família de exploração: entity-centric|problem-centric|outcome-centric|regulatory|counterfactual",
     )
     must_terms: List[str] = []
-    avoid_terms: List[str] = Field(
-        default=[],
-        description="**OPCIONAL - ruído a evitar (deixe [] se não houver)**\n"
-        "* Use quando há PALAVRAS-CHAVE específicas que causam falsos positivos\n"
-        "* **EXEMPLOS DE USO:**\n"
-        "  - Fase \"executive search\": avoid_terms: [\"vagas\", \"currículos\", \"job board\"] → evita posts de vagas\n"
-        "  - Fase \"aquisições\": avoid_terms: [\"promoção\", \"desconto\"] → evita e-commerce\n"
-        "  - Fase \"saúde digital\": avoid_terms: [\"fitness\", \"app gratuito\"] → evita consumer health apps\n"
-        "* **QUANDO NÃO USAR (deixe vazio []):**\n"
-        "  - Fases genéricas de mercado (risco de bloquear conteúdo válido)\n"
-        "  - Quando não há ruído óbvio e bem definido\n"
-        "  - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)\n"
-        "* **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resilente a ruído",
-    )
     time_hint: TimeHintModel
-    source_bias: List[str] = ["oficial", "primaria", "secundaria"]
-    evidence_goal: EvidenceGoalModel
     lang_bias: List[str] = ["pt-BR", "en"]
     geo_bias: List[str] = ["BR", "global"]
     suggested_domains: List[str] = Field(
@@ -488,10 +472,7 @@ class PhaseModel(BaseModel):
     seed_query: str
     seed_core: Optional[str] = None
     must_terms: List[str] = []
-    avoid_terms: List[str] = []
     time_hint: Dict[str, Any] = {}
-    source_bias: List[str] = []
-    evidence_goal: Dict[str, Any] = {}
     lang_bias: List[str] = []
     geo_bias: List[str] = []
 
@@ -1084,7 +1065,6 @@ class Deduplicator:
         must_terms: Optional[List[str]] = None,
         key_questions: Optional[List[str]] = None,
         enable_context_aware: Optional[bool] = None,
-        avoid_terms: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Deduplicação unificada com escolha de algoritmo
 
@@ -1100,17 +1080,6 @@ class Deduplicator:
             must_terms: Termos que devem ser preservados (context-aware)
             key_questions: Questões-chave para matching (context-aware)
             enable_context_aware: Ativar preservação de chunks críticos (None = usa valve)
-            avoid_terms: **OPCIONAL - ruído a evitar (deixe [] se não houver)**
-             * Use quando há PALAVRAS-CHAVE específicas que causam falsos positivos
-             * **EXEMPLOS DE USO:**
-               - Fase "executive search": avoid_terms: ["vagas", "currículos", "job board"] → evita posts de vagas
-               - Fase "aquisições": avoid_terms: ["promoção", "desconto"] → evita e-commerce
-               - Fase "saúde digital": avoid_terms: ["fitness", "app gratuito"] → evita consumer health apps
-             * **QUANDO NÃO USAR (deixe vazio []):**
-               - Fases genéricas de mercado (risco de bloquear conteúdo válido)
-               - Quando não há ruído óbvio e bem definido
-               - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)
-             * **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resiliente a ruído
 
         Returns:
             Dict com: chunks (deduped), original_count, deduped_count, reduction_pct, tokens_saved
@@ -2538,11 +2507,8 @@ def _render_contract(contract: Dict[str, Any]) -> str:
 
         # Mostrar must/avoid terms
         must_terms = fase.get("must_terms", [])
-        avoid_terms = fase.get("avoid_terms", [])
         if must_terms:
             lines.append(f"**✅ Must:** {', '.join(must_terms)}")
-        if avoid_terms:
-            lines.append(f"**❌ Avoid:** {', '.join(avoid_terms)}")
 
         # Mostrar time hint e source bias
         time_hint = fase.get("time_hint", {})
@@ -2702,10 +2668,7 @@ Extraia você mesmo as key questions e entidades da consulta abaixo e divida em 
       "seed_query": "<3-6 palavras, sem operadores>",
       "seed_core": "<12-200 chars, 1 frase rica, sem operadores>",
       "must_terms": ["<todas as entidades mencionadas>"],
-      "avoid_terms": ["<ruído>"] ,
       "time_hint": {"recency": "1y", "strict": false},
-      "source_bias": ["oficial", "primaria", "secundaria"],
-      "evidence_goal": {"official_or_two_independent": true, "min_domains": 3},
       "lang_bias": ["pt-BR", "en"],
       "geo_bias": ["BR", "global"]
     }"""
@@ -2984,17 +2947,8 @@ SE o payload tem 4+ ENTITIES_CANONICAL → MODO DISTRIBUÍDO:
      * Se usuário mencionou produtos/pessoas, TODOS vão em must_terms
      * Discovery vai usar must_terms para priorizar e expandir a busca
      * Seed_query + must_terms = máxima precisão
-   - avoid_terms: **OPCIONAL - ruído a evitar (deixe [] se não houver)**
-     * Use quando há PALAVRAS-CHAVE específicas que causam falsos positivos
-     * **EXEMPLOS DE USO:**
-       - Fase "executive search": avoid_terms: ["vagas", "currículos", "job board"] → evita posts de vagas
-       - Fase "aquisições": avoid_terms: ["promoção", "desconto"] → evita e-commerce
-       - Fase "saúde digital": avoid_terms: ["fitness", "app gratuito"] → evita consumer health apps
-     * **QUANDO NÃO USAR (deixe vazio []):**
-       - Fases genéricas de mercado (risco de bloquear conteúdo válido)
-       - Quando não há ruído óbvio e bem definido
-       - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)
-     * **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resiliente a ruído
+   - lang_bias: ["pt-BR","en"]
+   - geo_bias: ["BR","global"]
 
 🆕 **NOVO v4.7 - SEED_CORE E SEED_FAMILY_HINT:**
 
@@ -3058,10 +3012,7 @@ SCHEMA JSON OBRIGATÓRIO (com phase_type + seed_core + seed_family_hint):
       "seed_core": "<OPCIONAL: 1 frase rica ≤200 chars, sem operadores>",
       "seed_family_hint": "<OPCIONAL: entity-centric|problem-centric|outcome-centric|regulatory|counterfactual>",
       "must_terms": ["<termo1>", "<termo2>"],
-      "avoid_terms": ["<ruído/SEO>"],
       "time_hint": {{"recency": "90d|1y|3y", "strict": false}},
-      "source_bias": ["oficial","primaria","secundaria"],
-      "evidence_goal": {{"official_or_two_independent": true, "min_domains": 3}},
       "lang_bias": ["pt-BR","en"],
       "geo_bias": ["BR","global"],
       "suggested_domains": ["<OPCIONAL: domínios prioritários>"],
@@ -3110,10 +3061,10 @@ SCHEMA JSON OBRIGATÓRIO (com phase_type + seed_core + seed_family_hint):
   "plan_intent": "Mapear mercado de varejo digital no Brasil com foco em players nacionais e internacionais",
   "assumptions_to_validate": ["Crescimento do e-commerce regional supera o global", "Players locais têm vantagens logísticas"],
   "phases": [
-    {{"name": "Volume setorial", "phase_type": "industry", "objective": "Qual volume anual do varejo digital no Brasil?", "seed_query": "volume varejo digital Brasil", "seed_core": "volume anual vendas e-commerce Brasil", "must_terms": ["varejo digital", "e-commerce", "Brasil"], "avoid_terms": ["loja física"], "time_hint": {{"recency": "1y", "strict": false}}, "source_bias": ["oficial", "primaria"], "evidence_goal": {{"official_or_two_independent": true, "min_domains": 3}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
-    {{"name": "Tendências serviços", "phase_type": "industry", "objective": "Quais tendências e serviços adjacentes surgiram nos últimos 12 meses?", "seed_query": "tendências serviços varejo digital Brasil", "seed_core": "tendências emergentes serviços adjacentes varejo digital Brasil últimos 12 meses inovações tecnologia", "must_terms": ["varejo digital", "omnicanal", "logística", "Brasil"], "avoid_terms": ["loja física"], "time_hint": {{"recency": "1y", "strict": false}}, "source_bias": ["oficial", "primaria"], "evidence_goal": {{"official_or_two_independent": true, "min_domains": 3}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
-    {{"name": "Perfis e reputação", "phase_type": "profiles", "objective": "Como se posicionam Magalu, Via, Americanas e MercadoLivre?", "seed_query": "reputação players varejo digital Brasil", "seed_core": "Magalu Via Americanas MercadoLivre posicionamento competitivo reputação mercado brasileiro varejo digital últimos 2 anos", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["reclamações"], "time_hint": {{"recency": "3y", "strict": false}}, "source_bias": ["oficial", "primaria"], "evidence_goal": {{"official_or_two_independent": true, "min_domains": 3}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
-    {{"name": "Eventos recentes", "phase_type": "news", "objective": "Quais aquisições ou mudanças ocorreram nos últimos 90 dias?", "seed_query": "@noticias aquisições varejo digital Brasil", "seed_core": "aquisições parcerias mudanças estratégicas Magalu Via Americanas MercadoLivre varejo digital Brasil últimos 90 dias", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["promoções"], "time_hint": {{"recency": "90d", "strict": true}}, "source_bias": ["oficial", "primaria"], "evidence_goal": {{"official_or_two_independent": true, "min_domains": 2}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}}
+    {{"name": "Volume setorial", "phase_type": "industry", "objective": "Qual volume anual do varejo digital no Brasil?", "seed_query": "volume varejo digital Brasil", "seed_core": "volume anual vendas e-commerce Brasil", "must_terms": ["varejo digital", "e-commerce", "Brasil"], "avoid_terms": ["loja física"], "time_hint": {{"recency": "1y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
+    {{"name": "Tendências serviços", "phase_type": "industry", "objective": "Quais tendências e serviços adjacentes surgiram nos últimos 12 meses?", "seed_query": "tendências serviços varejo digital Brasil", "seed_core": "tendências emergentes serviços adjacentes varejo digital Brasil últimos 12 meses inovações tecnologia", "must_terms": ["varejo digital", "omnicanal", "logística", "Brasil"], "avoid_terms": ["loja física"], "time_hint": {{"recency": "1y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
+    {{"name": "Perfis e reputação", "phase_type": "profiles", "objective": "Como se posicionam Magalu, Via, Americanas e MercadoLivre?", "seed_query": "reputação players varejo digital Brasil", "seed_core": "Magalu Via Americanas MercadoLivre posicionamento competitivo reputação mercado brasileiro varejo digital últimos 2 anos", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["reclamações"], "time_hint": {{"recency": "3y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
+    {{"name": "Eventos recentes", "phase_type": "news", "objective": "Quais aquisições ou mudanças ocorreram nos últimos 90 dias?", "seed_query": "@noticias aquisições varejo digital Brasil", "seed_core": "aquisições parcerias mudanças estratégicas Magalu Via Americanas MercadoLivre varejo digital Brasil últimos 90 dias", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["promoções"], "time_hint": {{"recency": "90d", "strict": true}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}}
   ],
   "quality_rails": {{"min_unique_domains": 3, "need_official_or_two_independent": true}},
   "budget": {{"max_rounds": 2}}
@@ -3224,7 +3175,6 @@ Antes de retornar o JSON, verifique:
 ✅ **MUST_TERMS:**
 - [ ] 2-8 termos (não vazio, não excessivo)
 - [ ] TODAS as entidades canônicas incluídas (quando aplicável)
-- [ ] SEM overlap com avoid_terms
 
 ✅ **OBJECTIVE:**
 - [ ] Pergunta verificável (verbo: mapear/identificar/comparar/quantificar)
@@ -3251,7 +3201,6 @@ Antes de retornar o plano, verifique OBRIGATORIAMENTE cada item abaixo:
    - Se usuário mencionou "notícias" OU é "estudo de mercado" → existe fase type="news"?
    - Fase news tem time_hint.recency="1y" (não 90d) e strict=true?
    - Seed_query da fase news tem "@noticias" + tema + entidades?
-
 3️⃣ **Seeds válidas?**
    - Cada seed_query tem 3-8 palavras (excluindo @noticias)?
    - seed_query NÃO usa operadores (site:, filetype:, OR, AND, aspas)?
@@ -4358,7 +4307,7 @@ SAÍDA (JSON puro):
         # Validar cada fase
         validated_phases = []
         for i, phase in enumerate(phases_list, 1):
-            # Validar campos obrigatórios
+            # Validar campos obrigatórios (campos que NÃO têm defaults)
             required_fields = [
                 "name",
                 "objective",
@@ -4366,10 +4315,6 @@ SAÍDA (JSON puro):
                 "seed_core",
                 "must_terms",
                 "time_hint",
-                "source_bias",
-                "evidence_goal",
-                "lang_bias",
-                "geo_bias",
             ]
 
             for field in required_fields:
@@ -7388,10 +7333,7 @@ Retorne APENAS o JSON do contrato no formato:
       "objective": "objetivo da fase",
       "seed_query": "<3-6 palavras, sem operadores>",
       "must_terms": ["termo1", "termo2"],
-      "avoid_terms": [],
       "time_hint": {{"recency": "1y", "strict": false}},
-      "source_bias": ["oficial", "primaria", "secundaria"],
-      "evidence_goal": {{"official_or_two_independent": true, "min_domains": 3}},
       "lang_bias": ["pt-BR", "en"],
       "geo_bias": ["BR", "global"]
     }}

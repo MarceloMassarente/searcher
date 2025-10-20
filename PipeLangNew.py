@@ -7408,7 +7408,9 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                     if hint.lower() in key.lower():
                         return key
 
-        return None    async def _detect_unified_context(self, user_query: str, body: dict) -> Dict[str, Any]:
+        return None
+
+    async def _detect_unified_context(self, user_query: str, body: dict) -> Dict[str, Any]:
         """DETECÇÃO UNIFICADA DE CONTEXTO - Apenas LLM
         
         Analisa a consulta do usuário e histórico para determinar:

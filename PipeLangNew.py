@@ -91,7 +91,26 @@ try:
 except ImportError:
     HAYSTACK_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+# Configure structured logger (coexists with stdlib logging)
+try:
+    import structlog  # type: ignore
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    logger = structlog.get_logger(__name__)
+except Exception:
+    logger = logging.getLogger(__name__)
 
 # Global LLM cache
 _LLM_CACHE: Dict[str, Optional['AsyncOpenAIClient']] = {}
@@ -113,6 +132,11 @@ class StepTelemetry:
     outputs_brief: str = ""
     counters: Optional[Dict[str, int]] = None
     notes: Optional[List[str]] = None
+    success: bool = True
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    retry_count: int = 0
+    cache_hit: bool = False
     
     @property
     def elapsed_ms(self) -> float:
@@ -124,14 +148,23 @@ class StepTelemetry:
         return {
             "step": self.step,
             "correlation_id": self.correlation_id,
-            "start_ms": self.start_ms,
-            "end_ms": self.end_ms,
             "elapsed_ms": self.elapsed_ms,
+            "success": self.success,
+            "error_type": self.error_type,
             "inputs": self.inputs_brief,
             "outputs": self.outputs_brief,
             "counters": self.counters or {},
+            "retry_count": self.retry_count,
+            "cache_hit": self.cache_hit,
             "notes": self.notes or [],
         }
+
+    def mark_failed(self, error: Exception, retry: int = 0) -> None:
+        self.success = False
+        self.error_type = type(error).__name__
+        self.error_message = str(error)[:200]
+        self.retry_count = retry
+        self.end_ms = time.time() * 1000
 
 
 @dataclass
@@ -192,6 +225,37 @@ async def _safe_emit(emitter: Optional[Callable], payload: str) -> None:
     except Exception:
         # Never break pipeline due to emitter failures
         pass
+
+
+# ==================== RETRY/BACKOFF ====================
+from functools import wraps
+import random
+
+def retry_with_backoff(
+    max_attempts: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 10.0,
+    exceptions: tuple = (Exception,),
+):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            attempt = 0
+            while True:
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    attempt += 1
+                    if attempt >= max_attempts:
+                        raise
+                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                    try:
+                        logger.warning("retry_attempt", function=func.__name__, attempt=attempt, delay=f"{delay:.1f}s", error=str(e))
+                    except Exception:
+                        pass
+                    await asyncio.sleep(delay)
+        return wrapper
+    return decorator
 
 
 # ==================== CUSTOM EXCEPTIONS ====================
@@ -3164,7 +3228,6 @@ Antes de retornar o plano, verifique OBRIGATORIAMENTE cada item abaixo:
    - seed_core tem ≥12 caracteres e é DIFERENTE de seed_query?
    - seed_core inclui pelo menos 1 entidade + 1 aspecto adicional?
    - seed_core é 1 frase rica (não apenas palavras soltas)?
-
 4️⃣ **ENTIDADES (cobertura mínima):**
    - Se ≤3 entidades → elas aparecem em must_terms de pelo menos 70% das fases?
    - Seed_query das fases de profiles/news incluem TODAS as entidades?
@@ -4174,7 +4237,7 @@ ENTIDADES: {entities_str}
 GEO: {geo_str}
 FAMÍLIA: {seed_family} → {template}
 REGRAS:
-- SEM operadores (site:, filetype:, after:, before:)
+- SEM operadores (site:, filetype:, OR, AND, aspas)
 - Linguagem natural, clara
 - Incluir 1-2 entidades canônicas
 - Incluir geo quando relevante
@@ -4728,13 +4791,13 @@ class GraphNodes:
                 "correlation_id": correlation_id,
             }
             
-            if asyncio.iscoroutinefunction(self.discovery_tool):
-                discovery_result = await self.discovery_tool(**discovery_params)
-            else:
-                # Use asyncio.to_thread for sync functions
-                discovery_result = await asyncio.to_thread(
-                    lambda: self.discovery_tool(**discovery_params)
-                )
+            @retry_with_backoff(max_attempts=3, base_delay=1.0)
+            async def _call_discovery(params: Dict[str, Any]):
+                if asyncio.iscoroutinefunction(self.discovery_tool):
+                    return await self.discovery_tool(**params)
+                return await asyncio.to_thread(lambda: self.discovery_tool(**params))
+
+            discovery_result = await _call_discovery(discovery_params)
             
             if isinstance(discovery_result, str):
                 discovery_result = json.loads(discovery_result)
@@ -4745,6 +4808,7 @@ class GraphNodes:
             # ===== TELEMETRY FINAL =====
             if tel is not None:
                 tel.end_ms = time.time() * 1000
+                tel.success = True
                 if tel.counters is not None:
                     tel.counters["urls_found"] = len(discovered_urls)
                     tel.counters["new_urls"] = len(new_urls)
@@ -4786,6 +4850,10 @@ class GraphNodes:
                 correlation_id=correlation_id,
             )
             logger.error(f"[DISCOVERY] {json.dumps(err.to_dict(), ensure_ascii=False)}")
+            try:
+                tel.mark_failed(e)
+            except Exception:
+                pass
             
             # Recovery: Try to return partial results if available
             partial_urls = []
@@ -4886,6 +4954,7 @@ class GraphNodes:
                     await _safe_emit(em, f"[SCRAPE][{correlation_id}] batch failed/empty, using per-URL concurrency={concurrency}")
                     sem = asyncio.Semaphore(max(1, concurrency))
 
+                    @retry_with_backoff(max_attempts=3, base_delay=1.0)
                     async def _scrape_one(u: str) -> tuple[str, Optional[str]]:
                         async with sem:
                             try:
@@ -4939,6 +5008,7 @@ class GraphNodes:
             # ===== TELEMETRY FINAL =====
             if tel is not None:
                 tel.end_ms = time.time() * 1000
+                tel.success = True
                 if tel.counters is not None:
                     tel.counters["scraped"] = len(scraped_cache)
                 tel.outputs_brief = f"total_scraped={len(scraped_cache)}"
@@ -4975,6 +5045,10 @@ class GraphNodes:
                 correlation_id=correlation_id,
             )
             logger.error(f"[SCRAPING] {json.dumps(err.to_dict(), ensure_ascii=False)}")
+            try:
+                tel.mark_failed(e)
+            except Exception:
+                pass
             
             # Recovery: Return existing cache even if new scraping failed
             logger.info(f"[SCRAPING] Recovery: Returning existing cache with {len(scraped_cache)} URLs")
@@ -5031,12 +5105,13 @@ class GraphNodes:
             if self.context_reducer_tool is not None:
                 try:
                     tool = self.context_reducer_tool  # Store reference to avoid linter issues
-                    if asyncio.iscoroutinefunction(tool):
-                        context_result = await tool(**context_params)
-                    else:
-                        context_result = await asyncio.to_thread(
-                            lambda: tool(**context_params)
-                        )
+                    @retry_with_backoff(max_attempts=2, base_delay=1.0)
+                    async def _call_context(params: Dict[str, Any]):
+                        if asyncio.iscoroutinefunction(tool):
+                            return await tool(**params)
+                        return await asyncio.to_thread(lambda: tool(**params))
+
+                    context_result = await _call_context(context_params)
                 except Exception as e:
                     logger.warning(f"Context Reducer failed: {e}")
                     context_result = {"final_markdown": raw_content}
@@ -5059,6 +5134,7 @@ class GraphNodes:
             # ===== TELEMETRY FINAL =====
             if tel is not None:
                 tel.end_ms = time.time() * 1000
+                tel.success = True
                 if tel.counters is not None:
                     tel.counters["output_chars"] = len(filtered_content)
                 tel.outputs_brief = f"reduced={len(filtered_content)} chars (-{reduction:.1f}%)"
@@ -5077,6 +5153,10 @@ class GraphNodes:
         except (KeyError, ValueError, TypeError) as e:
             if getattr(self.valves, "VERBOSE_DEBUG", False):
                 print(f"[Context Reducer] Parse error: {e}, usando raw")
+            try:
+                tel.mark_failed(e)
+            except Exception:
+                pass
             accumulated_context += f"\n{raw_content}\n"
             out = {
                 "filtered_content": raw_content,
@@ -5096,6 +5176,10 @@ class GraphNodes:
                 correlation_id=correlation_id,
             )
             logger.error(f"[REDUCER] {json.dumps(err.to_dict(), ensure_ascii=False)}")
+            try:
+                tel.mark_failed(e)
+            except Exception:
+                pass
             accumulated_context += f"\n{raw_content}\n"
             out = {
                 "filtered_content": raw_content,
@@ -5294,7 +5378,6 @@ class GraphNodes:
         }
         await _safe_emit(em, f"[ANALYZE][{correlation_id}] end facts={len(out['facts'])} gaps={len(out['lacunas'])}")
         return out
-    
     async def judge_node(self, state: ResearchState) -> Dict:
         """Judge node - complete implementation with loop count increment and telemetry"""
         correlation_id = state.get('correlation_id', 'unknown')
@@ -5388,278 +5471,6 @@ class GraphNodes:
                 "loop_count": current_loop + 1,
                 "telemetry_loops": telemetry_loops,
             }
-    def _calculate_novelty_metrics(self, analysis: Dict, state: ResearchState) -> tuple[float, float]:
-        """Calculate novelty metrics for facts and domains"""
-        # Get current facts
-        current_facts = analysis.get("facts", [])
-        if not current_facts:
-            return 0.0, 0.0
-        
-        # Calculate new facts ratio
-        used_hashes = set(state.get("used_claim_hashes", []))
-        new_facts = 0
-        for fact in current_facts:
-            if isinstance(fact, dict):
-                fact_text = fact.get("texto", "")
-                if fact_text:
-                    import hashlib
-                    fact_hash = hashlib.sha256(fact_text.strip().lower().encode("utf-8")).hexdigest()
-                    if fact_hash not in used_hashes:
-                        new_facts += 1
-        
-        new_facts_ratio = new_facts / len(current_facts) if current_facts else 0.0
-        
-        # Calculate new domains ratio
-        used_domains = set(state.get("used_domains", []))
-        current_domains = set()
-        for fact in current_facts:
-            if isinstance(fact, dict):
-                for ev in fact.get("evidencias", []) or []:
-                    url = (ev or {}).get("url") or ""
-                    try:
-                        dom = url.split("/")[2] if "/" in url else ""
-                        if dom:
-                            current_domains.add(dom)
-                    except Exception:
-                        pass
-        
-        new_domains = len(current_domains - used_domains)
-        new_domains_ratio = new_domains / len(current_domains) if current_domains else 0.0
-        
-        return new_facts_ratio, new_domains_ratio
-def should_continue(state: ResearchState) -> str:
-    """
-    Router PURO - decide próximo nó baseado APENAS em state
-    
-    Enhanced with programmatic gates from JudgeLLM decision logic:
-    - Contradiction hard gate
-    - Overlap similarity gate  
-    - Phase score thresholds
-    - Flat streak logic
-    - Diminishing returns detection
-    
-    Returns:
-        "discovery" -> Loop de refinamento
-        "done" -> Fim da fase
-        "new_phase" -> Criar nova fase (fora do grafo)
-    """
-    verdict = state.get("verdict")
-    judgement = state.get("judgement")
-    if not verdict or judgement is None:
-        logger.error("[ROUTER] Missing verdict/judgement - forcing done")
-        return "done"
-    verdict = verdict or "done"
-    loop_count = state.get("loop_count", 0)
-    max_loops = state.get("max_loops", 3)
-    diminishing_returns = state.get("diminishing_returns", False)
-    phase_score = state.get("phase_score", 0.0)
-    telemetry_loops = state.get("telemetry_loops", [])
-    phase_context = state.get("phase_context", {})
-    analysis = state.get("analysis", {})
-    
-    # DEBUG: Log router decision inputs
-    if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-        print(f"[ROUTER] === Decision Inputs ===")
-        print(f"[ROUTER] loop_count={loop_count}/{max_loops}")
-        print(f"[ROUTER] verdict={verdict}")
-        print(f"[ROUTER] phase_score={phase_score:.2f}")
-        print(f"[ROUTER] diminishing_returns={diminishing_returns}")
-        print(f"[ROUTER] telemetry_loops_count={len(telemetry_loops)}")
-        print(f"[ROUTER] analysis_keys={list(analysis.keys()) if analysis else 'None'}")
-    
-    # ===== PROGRAMMATIC GATES (Safety Rails) =====
-    
-    # Gate 1: Contradiction Hard Gate
-    contradiction_score = analysis.get("self_assessment", {}).get("contradiction_score", 0.0)
-    contradiction_hard_gate = 0.75  # Default valve value
-    if contradiction_score >= contradiction_hard_gate:
-        if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-            print(f"[ROUTER][RAIL] Contradictions critical: {contradiction_score:.2f} ≥ {contradiction_hard_gate}")
-        return "new_phase"
-    
-    # Gate 2: Overlap Similarity Gate
-    overlap_similarity = state.get("phase_metrics", {}).get("overlap_similarity", 0.0)
-    if overlap_similarity >= 0.90:
-        if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-            print(f"[ROUTER][RAIL] Overlap too high: {overlap_similarity:.2f}")
-        return "discovery"  # Force refine
-    
-    # Gate 3: Diminishing Returns Gate
-    if diminishing_returns:
-        # Check if there are essential gaps mentioned in reasoning
-        reasoning = state.get("reasoning", "")
-        essential_gap_keywords = ["lacuna essencial", "informação crítica", "dados fundamentais"]
-        has_essential_gaps = any(keyword in reasoning.lower() for keyword in essential_gap_keywords)
-        
-        if not has_essential_gaps:
-            if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-                print(f"[ROUTER][RAIL] Diminishing returns detected without essential gaps")
-            return "done"
-    
-    # ===== PHASE SCORE BASED DECISIONS =====
-    
-    # Calculate flat streak (consecutive loops without improvement)
-    flat_streak = 0
-    if telemetry_loops and len(telemetry_loops) >= 2:
-        for i in range(len(telemetry_loops) - 1, 0, -1):
-            curr = telemetry_loops[i]
-            prev = telemetry_loops[i - 1]
-            delta_d = curr.get("unique_domains", 0) - prev.get("unique_domains", 0)
-            delta_f = curr.get("n_facts", 0) - prev.get("n_facts", 0)
-            if delta_d == 0 and delta_f == 0:
-                flat_streak += 1
-            else:
-                break
-    
-    # Get gates configuration
-    gates = getattr(phase_context, "gates", {})
-    threshold = gates.get("threshold", 0.60)
-    required_flat_loops = gates.get("two_flat_loops", 2)
-    coverage_target = 0.70  # Default valve value
-    
-    # Calculate coverage
-    key_questions_coverage = analysis.get("self_assessment", {}).get("coverage_score", 0.0)
-    
-    # Decision Tree (MECE)
-    
-    # Rule 1: DONE - Score good + coverage OK
-    if verdict == "done" or (phase_score >= threshold and key_questions_coverage >= coverage_target):
-        if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-            print(f"[ROUTER] Decision: DONE (verdict={verdict}, score={phase_score:.2f}≥{threshold}, coverage={key_questions_coverage:.2f}≥{coverage_target})")
-        _emit_decision_snapshot(
-            step="router",
-            vector={
-                "verdict": verdict,
-                "phase_score": phase_score,
-                "threshold": threshold,
-                "coverage": key_questions_coverage,
-                "coverage_target": coverage_target,
-                "flat_streak": flat_streak,
-                "loop_count": loop_count,
-            },
-            reason="done",
-        )
-        return "done"
-    
-    # Rule 2: NEW_PHASE - Score low + flat streak reached
-    if verdict == "new_phase" or (phase_score < threshold and flat_streak >= required_flat_loops):
-        if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-            print(f"[ROUTER] Decision: NEW_PHASE (verdict={verdict}, score={phase_score:.2f}<{threshold}, flat_streak={flat_streak}≥{required_flat_loops})")
-        _emit_decision_snapshot(
-            step="router",
-            vector={
-                "verdict": verdict,
-                "phase_score": phase_score,
-                "threshold": threshold,
-                "flat_streak": flat_streak,
-                "required_flat_loops": required_flat_loops,
-                "loop_count": loop_count,
-            },
-            reason="new_phase",
-        )
-        return "new_phase"
-    
-    # Rule 3: REFINE - Budget e next_query válidos
-    if verdict == "refine":
-        next_query = (state.get("next_query") or "").strip()
-        if loop_count >= max_loops:
-            logger.warning(f"[ROUTER] Refine requested but budget exhausted (loop {loop_count}/{max_loops})")
-            _emit_decision_snapshot(
-                step="router",
-                vector={"verdict": verdict, "loop_count": loop_count, "max_loops": max_loops, "budget_exhausted": True},
-                reason="refine_skipped_budget",
-            )
-            return "done"
-        if not next_query:
-            logger.warning(f"[ROUTER] Refine requested but next_query is empty")
-            _emit_decision_snapshot(
-                step="router",
-                vector={"verdict": verdict, "loop_count": loop_count, "max_loops": max_loops, "next_query_present": False},
-                reason="refine_skipped_empty_next_query",
-            )
-            return "done"
-        if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-            print(f"[ROUTER] Decision: DISCOVERY (refine; next_query set; loop_count={loop_count}<{max_loops})")
-        _emit_decision_snapshot(
-            step="router",
-            vector={"verdict": verdict, "loop_count": loop_count, "max_loops": max_loops, "next_query_present": True},
-            reason="refine",
-        )
-        return "discovery"
-    
-    # Rule 4: Fallback -> DONE
-    if getattr(state.get("valves"), "VERBOSE_DEBUG", False):
-        print(f"[ROUTER] Decision: DONE (fallback - no conditions met)")
-    _emit_decision_snapshot(
-        step="router",
-        vector={"verdict": verdict},
-        reason="fallback_done",
-    )
-    return "done"
-
-
-# ============================================================================
-# 5. BUILD GRAPH
-# ============================================================================
-
-def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
-    """
-    Constrói o grafo de pesquisa
-    
-    Fluxo:
-    discovery → scrape → reduce → analyze → judge
-         ↑                              ↓
-         └────────── refine ────────────┘
-                       ↓ done
-                      END
-    """
-    
-    # Criar instância dos nós
-    nodes = GraphNodes(valves, discovery_tool, scraper_tool, context_reducer_tool)
-    
-    # Criar grafo
-    if not LANGGRAPH_AVAILABLE:
-        # Falha explícita: LangGraph é obrigatório
-        raise ImportError("LangGraph não está disponível. Instale com: pip install langgraph")
-    workflow = StateGraph(ResearchState)
-    
-    # Adicionar nós
-    workflow.add_node("discovery", nodes.discovery_node)
-    workflow.add_node("scrape", nodes.scrape_node)
-    workflow.add_node("reduce", nodes.reduce_node)
-    workflow.add_node("analyze", nodes.analyze_node)
-    workflow.add_node("judge", nodes.judge_node)
-    
-    # Fluxo linear até Judge
-    workflow.set_entry_point("discovery")
-    workflow.add_edge("discovery", "scrape")
-    workflow.add_edge("scrape", "reduce")
-    workflow.add_edge("reduce", "analyze")
-    workflow.add_edge("analyze", "judge")
-    
-    # Decisão condicional após Judge
-    workflow.add_conditional_edges(
-        "judge",
-        should_continue,
-        {
-            "discovery": "discovery",  # Loop refinamento
-            "new_phase": END,          # Sair (Pipe cria fase)
-            "done": END,               # Concluir fase
-        }
-    )
-    
-    # Compilar com checkpointer
-    memory = MemorySaver()
-
-    try:
-        compiled_graph = workflow.compile(checkpointer=memory)
-        # Verify compiled graph has required methods
-        if not hasattr(compiled_graph, 'ainvoke'):
-            raise RuntimeError("Compiled graph missing ainvoke method")
-        return compiled_graph
-    except Exception as e:
-        raise RuntimeError(f"LangGraph compilation failed: {e}")
-
 
 class Pipe:
     """
@@ -5698,10 +5509,10 @@ class Pipe:
             description="Max loops/fase (aumentado de 2→3 para evitar new_phases forçadas prematuramente)",
         )
         DEFAULT_PHASE_COUNT: int = Field(
-            default=3,
+            default=6,
             ge=2,
             le=10,
-            description="Máximo de fases iniciais (Planner cria ATÉ este número)",
+            description="Máximo de fases iniciais (Planner cria ATÉ este número). Ajuste conforme necessário: 2-3 para pesquisas focadas, 4-6 para análises complexas, 7-10 para estudos abrangentes.",
         )
         MAX_PHASES: int = Field(
             default=6,
@@ -6145,6 +5956,40 @@ class Pipe:
         self.deduplicator = None
         
         logger.info("[PIPE] Pipe inicializado")
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Health check básico do pipeline."""
+        checks: Dict[str, Any] = {}
+        status = "healthy"
+        # LLM ping
+        try:
+            # Lazy create minimal client if needed
+            checks["llm"] = {"status": "unknown"}
+            # Not running a real call to avoid costs; report configured model
+            model = getattr(self.valves, "LLM_MODEL", "")
+            checks["llm"] = {"status": "configured" if model else "missing", "model": model}
+        except Exception as e:
+            status = "degraded"
+            checks["llm"] = {"status": "error", "error": str(e)}
+
+        # Tools
+        checks["tools"] = {
+            "discovery": "up" if getattr(self, "discovery_tool", None) else "missing",
+            "scraper": "up" if getattr(self, "scraper_tool", None) else "missing",
+            "context_reducer": "up" if getattr(self, "context_reducer_tool", None) else "missing",
+        }
+
+        # Cache stats, if available via scraper tool module
+        try:
+            checks["cache"] = {"status": "unknown"}
+        except Exception:
+            checks["cache"] = {"status": "unknown"}
+
+        return {
+            "status": status,
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "checks": checks,
+        }
     def _generate_pdf_base64(self, html_content: str, title: str) -> Optional[str]:
         """Generate PDF from HTML content and return as base64 string"""
         try:
@@ -6173,6 +6018,15 @@ class Pipe:
         __event_emitter__: Optional[Callable] = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
+        # Health check shortcut
+        try:
+            last_msg = (body or {}).get("messages", [])[-1].get("content", "").strip().lower()
+        except Exception:
+            last_msg = ""
+        if last_msg in {"/health", "/status", "/ping"}:
+            health = await self.health_check()
+            yield f"```json\n{json.dumps(health, ensure_ascii=False, indent=2)}\n```"
+            return
         """Complete pipe method implementation from PipeHaystack"""
         # Generate correlation ID for request tracing
         correlation_id = str(uuid.uuid4())[:8]
@@ -7697,7 +7551,7 @@ SCHEMA JSON:
             safe_params = get_safe_llm_params(self.valves.LLM_MODEL, {"temperature": 0.1})
             
             result = await _safe_llm_run_with_retry(
-                llm,
+                self.analyst.llm,
                 detect_prompt,
                 safe_params,
                 timeout=self.valves.LLM_TIMEOUT_DEFAULT,

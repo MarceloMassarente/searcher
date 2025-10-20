@@ -4378,7 +4378,7 @@ SAÍDA (JSON puro):
 
             # Validar avoid_terms não sobrepõe must_terms
             must_terms = phase["must_terms"]
-            avoid_terms = phase["avoid_terms"]
+            avoid_terms = phase.get("avoid_terms", [])  # Default to empty list if missing
             overlap = set(must_terms) & set(avoid_terms)
             if overlap:
                 raise ValueError(

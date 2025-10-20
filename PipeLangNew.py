@@ -2590,8 +2590,8 @@ def _build_planner_prompt(
     # Orientação específica por perfil detectado (compacta)
     profile_guidance = ""
     if detected_context:
-        perfil = detected_context.get("perfil", "")
-        setor = detected_context.get("setor", "")
+        perfil = detected_context.get("perfil_sugerido", "")
+        setor = detected_context.get("setor_principal", "")
         # Blocos curtos por perfil (2–3 bullets). Se já houver key_questions/entities, manter guidance minimalista
         short_guidance = {
             "company_profile": (
@@ -2629,7 +2629,7 @@ def _build_planner_prompt(
 ✅ {len(key_q)} key questions identificadas
 ✅ {len(entities)} entidades específicas detectadas  
 ✅ {len(objectives)} objetivos de pesquisa definidos
-✅ Perfil: {detected_context.get('perfil', 'N/A')}
+✅ Perfil: {detected_context.get('perfil_sugerido', 'N/A')}
 🔒 **PAYLOAD DO ESTRATEGISTA (USE EXCLUSIVAMENTE, NÃO RE-INFIRA):**
 KEY_QUESTIONS={json.dumps(key_q[:10], ensure_ascii=False)}
 ENTITIES_CANONICAL={json.dumps(entities[:15], ensure_ascii=False)}
@@ -6135,7 +6135,7 @@ class Pipe:
                 },
                 reason="preserve_context",
             )
-            yield f"**[CONTEXT]** 🔒 Mantendo contexto: {self._detected_context.get('perfil', 'N/A')}\n"
+            yield f"**[CONTEXT]** 🔒 Mantendo contexto: {self._detected_context.get('perfil_sugerido', 'N/A')}\n"
             if is_refinement:
                 yield f"**[INFO]** 💡 Modo refinamento detectado - ajustando plano existente\n"
         else:
@@ -6156,10 +6156,10 @@ class Pipe:
             # 🔗 SINCRONIZAR PERFIL DETECTADO com intent_profile (fonte única de verdade)
             if self._detected_context:
                 self._intent_profile = self._detected_context.get(
-                    "perfil", "company_profile"
+                    "perfil_sugerido", "company_profile"
                 )
                 logger.info(f"[PIPE] Perfil sincronizado: {self._intent_profile}")
-                yield f"**[CONTEXT]** 🔍 Perfil: {self._detected_context.get('perfil', 'N/A')} | Setor: {self._detected_context.get('setor', 'N/A')} | Tipo: {self._detected_context.get('tipo', 'N/A')}\n"
+                yield f"**[CONTEXT]** 🔍 Perfil: {self._detected_context.get('perfil_sugerido', 'N/A')} | Setor: {self._detected_context.get('setor_principal', 'N/A')} | Tipo: {self._detected_context.get('tipo_pesquisa', 'N/A')}\n"
 
         d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
 
@@ -6265,7 +6265,7 @@ class Pipe:
                     phase_index=phase_index,
                     contract=self._last_contract,
                     all_phase_queries=[phase.get("query_sugerida", "") for phase in phases_to_execute],
-                    intent_profile=self._detected_context.get("perfil", "general") if self._detected_context else "general",
+                    intent_profile=self._detected_context.get("perfil_sugerido", "general") if self._detected_context else "general",
                     discovered_urls=[],
                     new_urls=[],
                     cached_urls=list(global_state["scraped_cache"].keys()),
@@ -7127,7 +7127,7 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
 
         # Check profile sync
         if self._detected_context and hasattr(self, '_intent_profile') and self._intent_profile:
-            detected = self._detected_context.get("perfil")
+            detected = self._detected_context.get("perfil_sugerido")
             if detected and detected != self._intent_profile:
                 logger.warning(f"Profile mismatch syncing to detected: {detected}")
                 self._intent_profile = detected

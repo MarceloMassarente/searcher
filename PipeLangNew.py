@@ -4875,11 +4875,7 @@ class GraphNodes:
         """Discovery node - complete implementation from Orchestrator._run_discovery"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        
-            # ===== PROPAGATE TELEMETRY =====
-            if tel is not None and state.get("telemetry_loops") is not None:
-                state["telemetry_loops"].append(tel.to_dict())
-            await _safe_emit(em, f"[DISCOVERY][{correlation_id}] start")
+        await _safe_emit(em, f"[DISCOVERY][{correlation_id}] start")
         query = state.get('query', '')
         phase_context = state.get('phase_context', {})
         
@@ -5012,11 +5008,7 @@ class GraphNodes:
         """Scrape node - complete implementation from Orchestrator._run_scraping"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        
-            # ===== PROPAGATE TELEMETRY =====
-            if tel is not None and state.get("telemetry_loops") is not None:
-                state["telemetry_loops"].append(tel.to_dict())
-            await _safe_emit(em, f"[SCRAPE][{correlation_id}] start")
+        await _safe_emit(em, f"[SCRAPE][{correlation_id}] start")
         new_urls = state.get('new_urls', [])
         scraped_cache = state.get('scraped_cache', {})
         
@@ -5198,11 +5190,7 @@ class GraphNodes:
         """Reduce node - complete implementation from Orchestrator._run_context_reduction"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        
-            # ===== PROPAGATE TELEMETRY =====
-            if tel is not None and state.get("telemetry_loops") is not None:
-                state["telemetry_loops"].append(tel.to_dict())
-            await _safe_emit(em, f"[REDUCE][{correlation_id}] start")
+        await _safe_emit(em, f"[REDUCE][{correlation_id}] start")
         raw_content = state.get('raw_content', '')
         accumulated_context = state.get('accumulated_context', '')
         all_phase_queries = state.get('all_phase_queries', [])
@@ -5327,11 +5315,7 @@ class GraphNodes:
         """Analyze node - complete implementation from Orchestrator._run_analysis"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        
-            # ===== PROPAGATE TELEMETRY =====
-            if tel is not None and state.get("telemetry_loops") is not None:
-                state["telemetry_loops"].append(tel.to_dict())
-            await _safe_emit(em, f"[ANALYZE][{correlation_id}] start")
+        await _safe_emit(em, f"[ANALYZE][{correlation_id}] start")
         filtered_content = state.get('filtered_content', '')
         accumulated_context = state.get('accumulated_context', '')
         phase_context = state.get('phase_context', {})
@@ -5424,11 +5408,29 @@ class GraphNodes:
                 
                 deduped_paragraphs = dedupe_result["chunks"]
                 
-                # ✅ [FIX 3] Combinar pequenos parágrafos
-                deduped_paragraphs = _merge_small_paragraphs(
-                    deduped_paragraphs,
-                    min_chars=100
-                )
+                # ✅ [FIX 3] Combinar pequenos parágrafos (inline to avoid undefined helper)
+                def _merge_small_paragraphs_inline(paragraphs: list, min_chars: int = 100) -> list:
+                    merged: list[str] = []
+                    buf = ""
+                    for p in paragraphs:
+                        if len(p) < min_chars:
+                            if buf:
+                                buf += " " + p
+                            else:
+                                buf = p
+                            if len(buf) >= min_chars:
+                                merged.append(buf)
+                                buf = ""
+                        else:
+                            if buf:
+                                merged.append(buf)
+                                buf = ""
+                            merged.append(p)
+                    if buf:
+                        merged.append(buf)
+                    return merged
+
+                deduped_paragraphs = _merge_small_paragraphs_inline(deduped_paragraphs, min_chars=100)
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     print(f"[FIX 3] Merge pós-dedup: {dedupe_result['deduped_count']} → {len(deduped_paragraphs)} parágrafos")
@@ -6907,9 +6909,23 @@ class Pipe:
             )
 
             deduped_paragraphs = dedupe_result["chunks"]
-            
-            # ✅ [FIX 3] Combinar pequenos parágrafos
-            deduped_paragraphs = _merge_small_paragraphs(
+
+            # ✅ [FIX 3] Combinar pequenos parágrafos (inline helper para Analyst)
+            def _merge_small_paragraphs_inline_for_analyst(paragraphs: list, min_chars: int = 100) -> list:
+                merged = []
+                buffer = ""
+                for para in paragraphs:
+                    if buffer and len(buffer) + len(para) + 1 < min_chars:
+                        buffer += " " + para
+                    else:
+                        if buffer:
+                            merged.append(buffer)
+                        buffer = para
+                if buffer:
+                    merged.append(buffer)
+                return merged
+
+            deduped_paragraphs = _merge_small_paragraphs_inline_for_analyst(
                 deduped_paragraphs,
                 min_chars=100
             )
@@ -7570,7 +7586,8 @@ SCHEMA JSON:
             profile: Optional[str] = None,
             phase_objective: Optional[str] = None,
             **kwargs,
-        ):            """Wrapper to handle discovery tool parameters"""
+        ):
+            """Wrapper to handle discovery tool parameters"""
             # Extract time_hint parameters
             after = None
             before = None

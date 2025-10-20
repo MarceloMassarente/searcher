@@ -1899,6 +1899,59 @@ def sanitize_core_query_for_search(query: str) -> str:
     
     return query
 
+def _simplify_complex_query(query: str) -> str:
+    """
+    Simplifica queries muito complexas que foram rejeitadas pelo LLM Planner.
+    
+    Reduz:
+    - Múltiplos ORs (max 1)
+    - Muitas aspas (max 1)
+    - Muitos termos (max 7)
+    - Operadores site: (remove se >1)
+    
+    Estratégia: manter os termos mais importantes, remover operadores de restrição.
+    """
+    if not query:
+        return query
+    
+    # Contar complexidade
+    or_count = query.lower().count(' or ')
+    quote_count = query.count('"')
+    site_count = query.count('site:')
+    filetype_count = query.count('filetype:')
+    
+    # Se muito complexa, simplificar agressivamente
+    if or_count > 1 or quote_count > 2 or site_count > 1:
+        logger.warning(f"[QuerySimplifier] Query complexa detectada: {or_count} ORs, {quote_count} aspas, {site_count} site:, simplificando")
+        
+        # 1. Remove operadores site: e filetype:
+        simplified = re.sub(r'site:[^\s]+\s*', '', query, flags=re.I)
+        simplified = re.sub(r'filetype:[^\s]+\s*', '', simplified, flags=re.I)
+        
+        # 2. Remove aspas múltiplas (manter apenas 1)
+        quote_parts = re.split(r'"', simplified)
+        if len(quote_parts) > 3:
+            # Manter apenas a primeira phrase com aspas
+            first_quoted = quote_parts[1] if len(quote_parts) > 1 else ""
+            rest_without_quotes = " ".join([p for i, p in enumerate(quote_parts) if i % 2 == 0])
+            simplified = f'"{first_quoted}" {rest_without_quotes}'.strip()
+        
+        # 3. Remove ORs múltiplos (manter apenas 1)
+        or_parts = [p.strip() for p in re.split(r'\s+or\s+', simplified, flags=re.I) if p.strip()]
+        if len(or_parts) > 2:
+            # Manter apenas os 2 primeiros (1 OR)
+            simplified = f'{or_parts[0]} or {or_parts[1]}'
+        
+        # 4. Limitar a 7 termos
+        words = simplified.split()
+        if len(words) > 10:  # Aproximadamente 7 termos após limpeza
+            simplified = " ".join(words[:10])
+        
+        logger.warning(f"[QuerySimplifier] Query simplificada para: {simplified}")
+        return simplified.strip()
+    
+    return query
+
 class QueryClassifier:
     """Classificador de queries para determinar perfil de busca"""
     
@@ -1950,8 +2003,8 @@ async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any],
         # Build comprehensive prompt (from v2)
         base_prompt_template = (
             "Você é um estrategista de busca especialista. "
-            "Decomponha a consulta em 1 a 3 planos de busca independentes. "
-            "Cada plano deve cobrir uma faceta diferente, maximizando diversidade e cobertura.\n"
+            "Decomponha a consulta em 1 a 3 planos de busca SIMPLES e DIRETOS. "
+            "Cada plano deve cobrir uma faceta diferente, maximizando diversidade.\n"
             "\n"
             "### [CONTEXTO DA CONSULTA]\n"
             "{intent_context}\n"
@@ -1959,20 +2012,68 @@ async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any],
             "### [CONSULTA DO USUÁRIO]\n"
             "<<< {query} >>>\n"
             "\n"
-            "### [REGRAS PARA GERAÇÃO]\n"
-            "1. `core_query` deve ser pura string de busca (operadores: \"\", site:, filetype:, OR)\n"
-            "2. SEM explicações, numeração ou anotações no `core_query`\n"
-            "3. Máximo 3 planos. Cada um com: core_query (string), sites (list), filetypes (list)\n"
-            "4. Exemplo CORRETO: `\"trade as % GDP\" site:un.org OR site:worldbank.org`\n"
-            "5. Exemplo INCORRETO: `1) \"trade\" \"% GDP\" (objetivo: análise...)`\n"
+            "### [AVISO SOBRE SITE:]\n"
+            "{site_context}\n"
+            "\n"
+            "### [RAILS DISPONÍVEIS - JÁ APLICADOS PÓS-BUSCA]\n"
+            "⚠️ IMPORTANTE: Os seguintes filtros JÁ SÃO APLICADOS após a busca. "
+            "NÃO inclua no `core_query`, deixe para os rails:\n"
+            "- must_terms: Termos obrigatórios (priorizam resultados com esses termos)\n"
+            "- avoid_terms: Termos a evitar (penalizam resultados com esses termos)\n"
+            "- lang_bias: Preferências de idioma (PT-BR, EN, etc) - soft preference, não filtro\n"
+            "- geo_bias: Preferências geográficas (BR, US, global) - soft preference, não filtro\n"
+            "- official_domains: Domínios oficiais a priorizar (bonus de score)\n"
+            "- min_domains: Mínimo de domínios únicos desejados\n"
+            "- time_hint: Controle temporal fino (recency/strict)\n"
+            "\n"
+            "CONSEQUÊNCIA: Sua query pode ser SIMPLES porque os filtros complexos são aplicados depois!\n"
+            "\n"
+            "### [ESTRATÉGIA DE IDIOMA]\n"
+            "Você pode usar DIFERENTES idiomas em planos diferentes, conforme apropriado:\n"
+            "- Papers/SOTA/acadêmico → buscar em INGLÊS (maioria dos papers está em EN)\n"
+            "- Frameworks/código/docs → buscar em INGLÊS (documentação oficial em EN)\n"
+            "- Notícias/aplicações comerciais no Brasil → buscar em PORTUGUÊS\n"
+            "- Contexto técnico global/padrões → buscar em INGLÊS\n"
+            "IMPORTANTE: NÃO misture EN e PT no MESMO plano. Escolha 1 idioma por plano.\n"
+            "\n"
+            "### [REGRAS ESTRITAS PARA SIMPLICIDADE]\n"
+            "1. `core_query` deve ser SIMPLES: 4-7 palavras-chave (MÁXIMO).\n"
+            "2. Use aspas APENAS para frases exatas (0-1 por plano, máximo).\n"
+            "3. EVITE múltiplos operadores OR - use NO MÁXIMO 1 OR por plano.\n"
+            "4. ⚠️ SITE: APENAS SE USUÁRIO PEDIU EXPLICITAMENTE:\n"
+            "   - Usuário pediu? ('site:domain.com' OU 'em github.com' OU 'do Reuters') → use site:\n"
+            "   - Usuário NÃO pediu? → NÃO use site: (deixe vazio em 'sites': [])\n"
+            "5. Priorize semanticamente: palavras-chave naturais > operadores complexos.\n"
+            "6. SEM explicações, numeração ou anotações no `core_query`.\n"
+            "7. Máximo 3 planos.\n"
+            "\n"
+            "### [EXEMPLOS DE QUERIES BOM FORMATO]\n"
+            "✅ BOM (EN, sem site:): `autonomous agents LLMs benchmarks`\n"
+            "✅ BOM (PT, sem site:): `agentes autônomos frameworks adoção Brasil`\n"
+            "✅ BOM (EN, com site: porque user pediu): `machine learning site:arxiv.org` (user disse \"papers do arxiv\")\n"
+            "✅ BOM (EN + PT em planos diferentes): Plan 1=EN para SOTA, Plan 2=PT para notícias BR\n"
+            "❌ RUIM (misturando EN/PT no mesmo plano): `agentes autônomos AND autonomous agents benchmarks`\n"
+            "❌ RUIM (site: desnecessário): `agentes autônomos site:arxiv.org OR site:acm.org` (user não pediu)\n"
+            "❌ RUIM (tentando filtrar no core_query): `agentes autônomos (NOT vagas) (NOT currículos)` (use avoid_terms rail!)\n"
             "\n"
             "### [SCHEMA DE SAÍDA]\n"
             "{{ \"plans\": [ {{ \"core_query\": \"...\", \"sites\": [], \"filetypes\": [], \"suggested_domains\": [] }} ] }}\n"
             "\n"
+            "⚠️ IMPORTANTE: 'sites' e 'filetypes' são SUGESTÕES para curadoria POSTERIOR. "
+            "NÃO incluir site: ou filetype: no `core_query` a menos que o usuário tenha pedido explicitamente."
+            "\n"
             "Retorne SOMENTE JSON válido."
         )
         
-        prompt = base_prompt_template.format(intent_context=intent_context_str, query=query)
+        # Detect if user explicitly requested specific domains
+        site_detection = _detect_explicit_site_request(query)
+        site_context = f"[{site_detection['reason'].upper()}] {site_detection['suggested_context']}"
+        
+        prompt = base_prompt_template.format(
+            intent_context=intent_context_str, 
+            query=query,
+            site_context=site_context
+        )
         
         # ✅ HYBRID ASYNC: Run sync OpenAI call in thread executor
         def _sync_llm_call():
@@ -2856,6 +2957,7 @@ async def _execute_search_plans(
                     before=plan.get("before"),
                     include_date_in_query=False  # ✅ Helper function only for non-@noticias
                 )
+                # Pass categories intelligently based on intent detection
                 if cats:
                     searxng_params["categories"] = cats
                 searxng_params["format"] = "json"
@@ -3612,6 +3714,7 @@ async def discover_urls(
                         include_date_in_query=is_news_active  # ✅ Add dates to query for any news-mode
                     )
                     logger.info(f"[SearXNG] Effective locale → language={eff_lang or 'auto'}, country_bias={eff_country or 'none'} (soft)")
+                    # Pass categories intelligently based on intent detection
                     if cats:
                         searxng_params["categories"] = cats
                     # Always request JSON explicitly
@@ -4302,3 +4405,51 @@ def get_tools():
 
     _tools.append(discovery_tool)
     return _tools
+
+def _detect_explicit_site_request(query: str) -> Dict[str, Any]:
+    """
+    Detecta se o usuário pediu explicitamente por domínios específicos.
+    
+    Retorna:
+    {
+        "has_explicit_site": bool,  # True se user disse "site:X" ou similar
+        "reason": str,  # Motivo (ex: "site: operator found")
+        "suggested_context": str  # Contexto para passar ao Planner
+    }
+    """
+    if not query:
+        return {"has_explicit_site": False, "reason": "", "suggested_context": ""}
+    
+    low = query.lower()
+    
+    # 1. Detecção de site: operator explícito
+    if "site:" in low:
+        return {
+            "has_explicit_site": True,
+            "reason": "site: operator found in query",
+            "suggested_context": "User explicitly requested specific domains with 'site:' operator"
+        }
+    
+    # 2. Detecção de pedidos de domínios específicos em PT
+    domain_request_patterns = [
+        r"do\s+(github|arxiv|acm|ieee|reuters|bloomberg|valor|folha)",  # "papers do arxiv"
+        r"em\s+(github|arxiv|acm|ieee|reuters|bloomberg)",  # "resultados em github"
+        r"de\s+(github|arxiv|acm|ieee|reuters|bloomberg|valor|folha)",  # "dados de valor"
+        r"apenas\s+em\s+\w+",  # "apenas em github"
+        r"somente\s+em\s+\w+",  # "somente em arxiv"
+    ]
+    
+    for pattern in domain_request_patterns:
+        if re.search(pattern, low, re.I):
+            return {
+                "has_explicit_site": True,
+                "reason": f"Domain-specific request pattern detected: {pattern}",
+                "suggested_context": "User explicitly requested specific domains"
+            }
+    
+    # 3. Default: user NÃO pediu explicitamente
+    return {
+        "has_explicit_site": False,
+        "reason": "No explicit domain request detected",
+        "suggested_context": "User did NOT request specific domains - diversify sources freely"
+    }

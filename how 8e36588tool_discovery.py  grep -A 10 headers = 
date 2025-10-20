@@ -1,0 +1,20 @@
+[33m9dbde1b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Fix: Correct indentation of detect_unified_context insertion
+[33ma6dbafe[m Sprint 1: Fix all P0/P1 critical issues - Judge node, Context Detection, Telemetry propagation, Global state expansion
+[33m814e990[m Fix: Reduce deduplication fragmentation (3 critical fixes)
+[33m559fda5[m Fix: populate telemetry_data phases + guard against None research_context in synthesis
+[33mc7b14f3[m Fix: Add __event_emitter__ to initial_state so all nodes can emit chat messages
+[33ma7b4150[m Restore full LLM planner prompt while keeping hybrid async with sync OpenAI in run_in_executor
+[33m1df3008[m Implement hybrid async solution: async def for PipeLangNew, sync OpenAI in thread executor, simplified QueryBuilder like v2
+[33m8e36588[m Fix SearXNG 500 errors: simplify query builder to v2 approach
+[33m0acbd29[m[33m ([m[1;31morigin/main[m[33m)[m Fix critical issues in PipeLangNew and tool_discovery
+[33m00a52be[m Initialize AnalystLLM, JudgeLLM, and Deduplicator components in GraphNodes.__init__ - fixes NoneType errors during phase execution
+[33m581370b[m Fix discovery tool parameters extraction - extract must_terms, avoid_terms, time_hint, lang_bias, geo_bias, seed_family_hint from phase_context instead of passing entire phase_context dict
+[33m3e0305d[m Add config parameter with thread_id to graph.ainvoke() - fixes Checkpointer requirements
+[33m01ec80b[m Fix critical Python scope issue - avoid StateGraph/MemorySaver shadowing in debug code that caused 'cannot access local variable' error
+[33m3ff9f58[m Clean up temporary helper scripts
+[33m592ddf8[m Fix frontmatter format - use correct OpenWebUI docstring syntax with requirements: langgraph,langchain,langchain-openai
+[33m5d0861a[m Add frontmatter with langgraph requirements - ensures OpenWebUI automatically installs langgraph>=0.3.5
+[33mafd11a3[m Fix StateGraph initialization - only instantiate when LANGGRAPH_AVAILABLE is True
+[33md6a9968[m Add comprehensive LangGraph debug logging - detect version, import issues, and provide installation guidance
+[33mb910039[m Add missing build_research_graph function that creates and compiles the LangGraph workflow
+[33mad60d30[m Enhance Planner output - display must_terms, time_hint, key_questions for richer details

@@ -4799,11 +4799,31 @@ class GraphNodes:
         
         try:
             # Call discovery tool
-            discovery_params = {
-                "query": query,
-                "phase_context": phase_context,
-                "correlation_id": correlation_id,
-            }
+            discovery_params = {"query": query}
+            
+            # Extract discovery parameters from phase_context (like in PipeHaystack)
+            if phase_context:
+                if phase_context.get("must_terms"):
+                    discovery_params["must_terms"] = phase_context["must_terms"]
+                if phase_context.get("avoid_terms"):
+                    discovery_params["avoid_terms"] = phase_context["avoid_terms"]
+                if phase_context.get("time_hint"):
+                    discovery_params["time_hint"] = phase_context["time_hint"]
+                if phase_context.get("lang_bias"):
+                    discovery_params["lang_bias"] = phase_context["lang_bias"]
+                if phase_context.get("geo_bias"):
+                    discovery_params["geo_bias"] = phase_context["geo_bias"]
+                if phase_context.get("seed_family_hint"):
+                    discovery_params["seed_family_hint"] = phase_context["seed_family_hint"]
+                if phase_context.get("suggested_domains"):
+                    discovery_params["suggested_domains"] = phase_context["suggested_domains"]
+                if phase_context.get("suggested_filetypes"):
+                    discovery_params["suggested_filetypes"] = phase_context["suggested_filetypes"]
+                
+                # Propagar phase_objective
+                objective = phase_context.get("objetivo") or phase_context.get("objective", "")
+                if objective:
+                    discovery_params["phase_objective"] = objective
             
             @retry_with_backoff(max_attempts=3, base_delay=1.0)
             async def _call_discovery(params: Dict[str, Any]):

@@ -369,7 +369,20 @@ class PlannerPhaseModel(BaseModel):
         description="Família de exploração: entity-centric|problem-centric|outcome-centric|regulatory|counterfactual",
     )
     must_terms: List[str] = []
-    avoid_terms: List[str] = []
+    avoid_terms: List[str] = Field(
+        default=[],
+        description="**OPCIONAL - ruído a evitar (deixe [] se não houver)**\n"
+        "* Use quando há PALAVRAS-CHAVE específicas que causam falsos positivos\n"
+        "* **EXEMPLOS DE USO:**\n"
+        "  - Fase \"executive search\": avoid_terms: [\"vagas\", \"currículos\", \"job board\"] → evita posts de vagas\n"
+        "  - Fase \"aquisições\": avoid_terms: [\"promoção\", \"desconto\"] → evita e-commerce\n"
+        "  - Fase \"saúde digital\": avoid_terms: [\"fitness\", \"app gratuito\"] → evita consumer health apps\n"
+        "* **QUANDO NÃO USAR (deixe vazio []):**\n"
+        "  - Fases genéricas de mercado (risco de bloquear conteúdo válido)\n"
+        "  - Quando não há ruído óbvio e bem definido\n"
+        "  - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)\n"
+        "* **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resilente a ruído",
+    )
     time_hint: TimeHintModel
     source_bias: List[str] = ["oficial", "primaria", "secundaria"]
     evidence_goal: EvidenceGoalModel
@@ -1071,6 +1084,7 @@ class Deduplicator:
         must_terms: Optional[List[str]] = None,
         key_questions: Optional[List[str]] = None,
         enable_context_aware: Optional[bool] = None,
+        avoid_terms: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Deduplicação unificada com escolha de algoritmo
 
@@ -1086,6 +1100,17 @@ class Deduplicator:
             must_terms: Termos que devem ser preservados (context-aware)
             key_questions: Questões-chave para matching (context-aware)
             enable_context_aware: Ativar preservação de chunks críticos (None = usa valve)
+            avoid_terms: **OPCIONAL - ruído a evitar (deixe [] se não houver)**
+             * Use quando há PALAVRAS-CHAVE específicas que causam falsos positivos
+             * **EXEMPLOS DE USO:**
+               - Fase "executive search": avoid_terms: ["vagas", "currículos", "job board"] → evita posts de vagas
+               - Fase "aquisições": avoid_terms: ["promoção", "desconto"] → evita e-commerce
+               - Fase "saúde digital": avoid_terms: ["fitness", "app gratuito"] → evita consumer health apps
+             * **QUANDO NÃO USAR (deixe vazio []):**
+               - Fases genéricas de mercado (risco de bloquear conteúdo válido)
+               - Quando não há ruído óbvio e bem definido
+               - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)
+             * **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resiliente a ruído
 
         Returns:
             Dict com: chunks (deduped), original_count, deduped_count, reduction_pct, tokens_saved
@@ -2959,7 +2984,17 @@ SE o payload tem 4+ ENTITIES_CANONICAL → MODO DISTRIBUÍDO:
      * Se usuário mencionou produtos/pessoas, TODOS vão em must_terms
      * Discovery vai usar must_terms para priorizar e expandir a busca
      * Seed_query + must_terms = máxima precisão
-   - avoid_terms: ruído a evitar
+   - avoid_terms: **OPCIONAL - ruído a evitar (deixe [] se não houver)**
+     * Use quando há PALAVRAS-CHAVE específicas que causam falsos positivos
+     * **EXEMPLOS DE USO:**
+       - Fase "executive search": avoid_terms: ["vagas", "currículos", "job board"] → evita posts de vagas
+       - Fase "aquisições": avoid_terms: ["promoção", "desconto"] → evita e-commerce
+       - Fase "saúde digital": avoid_terms: ["fitness", "app gratuito"] → evita consumer health apps
+     * **QUANDO NÃO USAR (deixe vazio []):**
+       - Fases genéricas de mercado (risco de bloquear conteúdo válido)
+       - Quando não há ruído óbvio e bem definido
+       - Quando objetivo é amplitude/descoberta (melhor deixar Discovery trabalhar)
+     * **REGRA PRÁTICA:** Se duvidoso, deixe [] - Discovery é resiliente a ruído
    - time_hint: {"recency": "90d|1y|3y", "strict": true/false}
    - source_bias: ["oficial", "primaria", "secundaria"]
    - evidence_goal: {"official_or_two_independent": true, "min_domains": 3}
@@ -3216,7 +3251,6 @@ Antes de retornar o plano, verifique OBRIGATORIAMENTE cada item abaixo:
 1️⃣ **Todas as key_questions cobertas?**
    - Cada KEY_QUESTION do payload tem ≥1 fase correspondente?
    - Se alguma ficou órfã → crie fase adicional
-
 2️⃣ **Notícias (se pedidas)?**
    - Se usuário mencionou "notícias" OU é "estudo de mercado" → existe fase type="news"?
    - Fase news tem time_hint.recency="1y" (não 90d) e strict=true?
@@ -7358,7 +7392,7 @@ Retorne APENAS o JSON do contrato no formato:
       "objective": "objetivo da fase",
       "seed_query": "<3-6 palavras, sem operadores>",
       "must_terms": ["termo1", "termo2"],
-      "avoid_terms": ["ruído"],
+      "avoid_terms": [],
       "time_hint": {{"recency": "1y", "strict": false}},
       "source_bias": ["oficial", "primaria", "secundaria"],
       "evidence_goal": {{"official_or_two_independent": true, "min_domains": 3}},

@@ -2505,7 +2505,7 @@ def _render_contract(contract: Dict[str, Any]) -> str:
         seed_core = fase.get("seed_core", "N/A")
         lines.append(f"**Seed Query:** `{seed_core}`")
 
-        # Mostrar must/avoid terms
+        # Mostrar must_terms
         must_terms = fase.get("must_terms", [])
         if must_terms:
             lines.append(f"**✅ Must:** {', '.join(must_terms)}")
@@ -6222,9 +6222,12 @@ class Pipe:
                 return
 
             try:
-                # Test if StateGraph can be instantiated
-                test_workflow = StateGraph(ResearchState) if LANGGRAPH_AVAILABLE else StateGraph()
-                test_workflow.add_node("test", lambda x: x)
+                # Test if StateGraph can be instantiated ONLY if LangGraph is available
+                if LANGGRAPH_AVAILABLE:
+                    test_workflow = StateGraph(ResearchState)
+                    test_workflow.add_node("test", lambda x: x)
+                else:
+                    raise ImportError("LangGraph not available in this environment")
             except Exception as e:
                 yield f"**[ERRO]** LangGraph não está funcionando corretamente: {e}\n"
                 yield "**[SUGESTÃO]** Reinstale o LangGraph: pip uninstall langgraph && pip install langgraph\n"

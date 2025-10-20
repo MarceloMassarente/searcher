@@ -493,8 +493,6 @@ class QualityRailsModel(BaseModel):
     min_unique_domains: int = Field(ge=2)
     need_official_or_two_independent: bool = True
     official_domains: List[str] = []
-
-
 # ==================== CONSTANTS AND UTILITIES ====================
 class PipeConstants:
     """
@@ -2927,7 +2925,6 @@ SE o payload tem 4+ ENTITIES_CANONICAL → MODO DISTRIBUÍDO:
 - [ ] **News phase?** Se pedido "notícias" ou "estudo de mercado": fase news com "@noticias" e 1y?
 - [ ] **Key questions cobertas?** Cada KEY_QUESTION do payload tem fase correspondente?
 - [ ] **Seed_query válido?** 3-8 palavras, sem operadores, contém tema central + entidades?
-
 📐 REGRAS OBRIGATÓRIAS:
 ✅ CADA FASE TEM:
    - name: descritivo e único
@@ -3109,10 +3106,10 @@ Antes de retornar o plano, verifique OBRIGATORIAMENTE:
 2. **Se alguma key_question NÃO for coberta** → crie fase adicional específica
 3. **Mapeamento mental obrigatório:**
    - Key_Q "Qual volume...?" → Fase "Volume setorial" (industry, 1y ou 3y)
-   - Key_Q "Quais tendências...?" → Fase "Tendências/evolução" (industry, 1y) ← CRÍTICO!
+   - Key_Q "Quais tendências...?" → Fase "Tendências/evolução" (industry, 1y)  ← CRÍTICO!
    - Key_Q "Qual reputação...?" → Fase "Perfis players" (profiles, 3y)
-   - Key_Q "Quais eventos/notícias...?" → Fase "Eventos mercado" (news, 1y) ← v4.4: 1y padrão!
-   - Key_Q "Últimos dias/90d...?" → Fase "Breaking news" (news, 90d) ← v4.4: apenas se explícito!
+   - Key_Q "Quais eventos/notícias...?" → Fase "Eventos mercado" (news, 1y)  ← v4.4: 1y padrão!
+   - Key_Q "Últimos dias/90d...?" → Fase "Breaking news" (news, 90d)  ← v4.4: apenas se explícito!
    - Key_Q "Quais riscos/oportunidades 3-5 anos?" → Fase "Tendências/evolução" (industry, 1y)
 
 **SE** alguma key_question não tiver fase correspondente → **ERRO CRÍTICO** → crie fase adicional.
@@ -4021,6 +4018,7 @@ class JudgeLLM:
             "phase_metrics": phase_metrics,
             "seed_family": seed_family_switch,  # Presente apenas se NEW_PHASE por exploração
             "modifications": modifications,  # Lista de modificações aplicadas
+            "telemetry_loops": telemetry_loops,  # Persist telemetry loops across iterations
         }
 
 
@@ -4168,8 +4166,6 @@ Você é um ANALYST. Extraia 3-5 fatos importantes do contexto.
 
 **PRINCÍPIO FUNDAMENTAL:** Priorize QUALIDADE sobre QUANTIDADE. É melhor ter poucos fatos de alta qualidade que respondem ao objetivo do que muitos fatos genéricos.""",
 }
-
-
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
 # ============================================================================
@@ -4614,8 +4610,6 @@ INSTRUÇÕES:
         
         # Fallback return (should never reach here)
         return {"contract": {}, "contract_hash": ""}
-
-
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
 # ============================================================================
@@ -4759,9 +4753,22 @@ def should_continue_research(state: ResearchState) -> str:
         except ValueError:
             logger.warning(f"[ROUTER][{correlation_id}] Invalid max_loops type: {type(max_loops)}, defaulting to 3")
             max_loops = 3
-            
-    verdict = state.get('verdict', 'done')
     
+    # ===== NEW: Detect infinite loops =====
+    prev_loop_count = state.get('_prev_loop_count', -1)
+    if loop_count == prev_loop_count:
+        logger.error(f"[ROUTER][{correlation_id}] INFINITE LOOP DETECTED: loop_count not incremented (stuck at {loop_count})")
+        return END
+    
+    # ===== NEW: Validate verdict field =====
+    verdict = state.get('verdict', 'done')
+    if verdict not in ['done', 'refine', 'new_phase']:
+        logger.warning(f"[ROUTER][{correlation_id}] Invalid verdict: '{verdict}', forcing done")
+        verdict = 'done'
+    
+    # Update prev_loop_count for next iteration
+    state['_prev_loop_count'] = loop_count
+            
     # Debug state validation (only if VERBOSE_DEBUG)
     if logger.level <= 10:  # DEBUG level
         logger.debug(f"[ROUTER][{correlation_id}] State check:")
@@ -4868,7 +4875,11 @@ class GraphNodes:
         """Discovery node - complete implementation from Orchestrator._run_discovery"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        await _safe_emit(em, f"[DISCOVERY][{correlation_id}] start")
+        
+            # ===== PROPAGATE TELEMETRY =====
+            if tel is not None and state.get("telemetry_loops") is not None:
+                state["telemetry_loops"].append(tel.to_dict())
+            await _safe_emit(em, f"[DISCOVERY][{correlation_id}] start")
         query = state.get('query', '')
         phase_context = state.get('phase_context', {})
         
@@ -5001,7 +5012,11 @@ class GraphNodes:
         """Scrape node - complete implementation from Orchestrator._run_scraping"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        await _safe_emit(em, f"[SCRAPE][{correlation_id}] start")
+        
+            # ===== PROPAGATE TELEMETRY =====
+            if tel is not None and state.get("telemetry_loops") is not None:
+                state["telemetry_loops"].append(tel.to_dict())
+            await _safe_emit(em, f"[SCRAPE][{correlation_id}] start")
         new_urls = state.get('new_urls', [])
         scraped_cache = state.get('scraped_cache', {})
         
@@ -5183,7 +5198,11 @@ class GraphNodes:
         """Reduce node - complete implementation from Orchestrator._run_context_reduction"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        await _safe_emit(em, f"[REDUCE][{correlation_id}] start")
+        
+            # ===== PROPAGATE TELEMETRY =====
+            if tel is not None and state.get("telemetry_loops") is not None:
+                state["telemetry_loops"].append(tel.to_dict())
+            await _safe_emit(em, f"[REDUCE][{correlation_id}] start")
         raw_content = state.get('raw_content', '')
         accumulated_context = state.get('accumulated_context', '')
         all_phase_queries = state.get('all_phase_queries', [])
@@ -5308,7 +5327,11 @@ class GraphNodes:
         """Analyze node - complete implementation from Orchestrator._run_analysis"""
         correlation_id = state.get('correlation_id', 'unknown')
         em = state.get('__event_emitter__')
-        await _safe_emit(em, f"[ANALYZE][{correlation_id}] start")
+        
+            # ===== PROPAGATE TELEMETRY =====
+            if tel is not None and state.get("telemetry_loops") is not None:
+                state["telemetry_loops"].append(tel.to_dict())
+            await _safe_emit(em, f"[ANALYZE][{correlation_id}] start")
         filtered_content = state.get('filtered_content', '')
         accumulated_context = state.get('accumulated_context', '')
         phase_context = state.get('phase_context', {})
@@ -5517,6 +5540,52 @@ class GraphNodes:
         }
         await _safe_emit(em, f"[ANALYZE][{correlation_id}] end facts={len(out['facts'])} gaps={len(out['lacunas'])}")
         return out
+
+    async def judge_node(self, state: ResearchState) -> Dict:
+        """Judge node - evaluates analysis and decides next step"""
+        correlation_id = state.get("correlation_id", "unknown")
+        em = state.get("__event_emitter__")
+        await _safe_emit(em, f"[JUDGE][{correlation_id}] start")
+        try:
+            analysis = state.get("analysis", {})
+            user_prompt = state.get("original_query", "")
+            phase_context = state.get("phase_context", {})
+            judgment = await self.judge.run(
+                user_prompt=user_prompt,
+                analysis=analysis,
+                phase_context=phase_context,
+                telemetry_loops=state.get("telemetry_loops", []),
+                intent_profile=state.get("intent_profile", ""),
+                full_contract=state.get("contract", {}),
+                valves=self.valves,
+                refine_queries=state.get("analyst_proposals", {}).get("refine_queries", []),
+                phase_candidates=state.get("phase_results", []),
+                previous_queries=state.get("previous_queries", []),
+                failed_queries=state.get("failed_queries", []),
+            )
+            verdict = judgment.get("verdict", "done")
+            phase_score = judgment.get("phase_score", 0.0)
+            await _safe_emit(em, f"[JUDGE][{correlation_id}] verdict={verdict} score={phase_score:.2f}")
+            return {
+                "verdict": verdict,
+                "reasoning": judgment.get("reasoning", ""),
+                "next_query": judgment.get("next_query"),
+                "new_phase": judgment.get("new_phase"),
+                "phase_score": phase_score,
+                "judgement": judgment,
+                "telemetry_loops": state.get("telemetry_loops", []),  # Persist telemetry loops across iterations
+            }
+        except Exception as e:
+            logger.error(f"[JUDGE] Error: {str(e)}")
+            return {
+                "verdict": "done",
+                "reasoning": f"Judge error: {str(e)}",
+                "next_query": None,
+                "new_phase": None,
+                "phase_score": 0.0,
+                "judgement": {},
+            }
+
 
 class Pipe:
     """
@@ -6295,6 +6364,12 @@ class Pipe:
                 "phase_results": [],  # Accumulated results
                 "accumulated_context": "",  # Global context accumulation
                 "telemetry_loops": [],  # Global telemetry
+                # ===== NEW: Fields for Judge decision-making =====
+                "phase_scores": [],  # Phase score history for Judge trend analysis
+                "failed_queries": [],  # Queries that failed to avoid retry
+                "previous_queries": [],  # All queries tried to prevent duplication
+                "contradictions": 0,  # Global contradiction counter
+                "total_facts_extracted": 0,  # Cumulative facts across phases
             }
             
             phase_results = []
@@ -6519,10 +6594,8 @@ class Pipe:
         if not isinstance(out, dict) or "contract" not in out:
             yield "**[ERRO]** Contrato inválido gerado pelo Planner\n"
             return
-
         self._last_contract = out["contract"]
         yield "**[INFO]** ✅ Contrato gerado com sucesso\n"
-
         # Render contract for user
         yield f"\n📋 **Plano de Pesquisa**\n\n"
         for i, phase in enumerate(out["contract"].get("fases", []), 1):
@@ -7335,7 +7408,112 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                     if hint.lower() in key.lower():
                         return key
 
-        return None
+        return None    async def _detect_unified_context(self, user_query: str, body: dict) -> Dict[str, Any]:
+        """DETECÇÃO UNIFICADA DE CONTEXTO - Apenas LLM
+        
+        Analisa a consulta do usuário e histórico para determinar:
+        - Setor/indústria (10+ setores)
+        - Tipo de pesquisa
+        - Perfil apropriado
+        - Metadados adaptativos
+        """
+        text_sample = user_query.lower()
+        messages = body.get("messages", [])
+        if messages:
+            for msg in messages[:-1]:
+                content = msg.get("content", "")
+                if content:
+                    text_sample += " " + content.lower()
+        
+        try:
+            from datetime import datetime
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            
+            detect_prompt = f"""Você é um consultor de estratégia sênior.
+Pense passo a passo INTERNAMENTE, mas NÃO exponha o raciocínio.
+Retorne SOMENTE JSON válido no schema abaixo.
+
+⚠️ IMPORTANTE:
+- NÃO use markdown ou código fence (```json)
+- NÃO escreva nada fora do JSON
+- Apenas JSON válido conforme schema
+
+CONSULTA: {user_query}
+
+CONTEXTO DO HISTÓRICO:
+{text_sample[:1000]}
+
+Data atual: {current_date}
+
+TAREFA:
+Analise a consulta e produza JSON com:
+- setor_principal: específico, não "geral"
+- tipo_pesquisa: acadêmica, mercado, técnica, regulatória, notícias
+- perfil_sugerido: company_profile|regulation_review|technical_spec|literature_review|history_review
+- key_questions: 5-10 perguntas de DECISÃO
+- entities_mentioned: empresas/pessoas mencionadas EXPLICITAMENTE
+- research_objectives: 3-5 objetivos específicos
+
+SCHEMA JSON:
+{{
+  "setor_principal": "string",
+  "tipo_pesquisa": "string",
+  "perfil_sugerido": "string",
+  "key_questions": ["string"],
+  "entities_mentioned": [{{"canonical": "string", "aliases": ["string"]}}],
+  "research_objectives": ["string"],
+  "detecção_confianca": 0.85,
+  "fonte_deteccao": "llm"
+}}"""
+            
+            # ===== CHAMAR LLM =====
+            llm = _get_llm(self.valves, model_name=getattr(self.valves, "LLM_MODEL", "gpt-4o"))
+            if not llm:
+                logger.warning("[_detect_unified_context] LLM não disponível")
+                return self._fallback_context(user_query)
+            
+            safe_params = get_safe_llm_params(llm.model_name, {"temperature": 0.2})
+            result = await _safe_llm_run_with_retry(
+                llm, detect_prompt, safe_params, timeout=60, max_retries=2
+            )
+            
+            if result and result.get("replies"):
+                try:
+                    parsed = parse_json_resilient(result["replies"][0], mode="balanced")
+                    if parsed and isinstance(parsed, dict):
+                        return {
+                            'setor_principal': parsed.get('setor_principal', 'geral'),
+                            'tipo_pesquisa': parsed.get('tipo_pesquisa', 'geral'),
+                            'perfil_sugerido': parsed.get('perfil_sugerido', 'company_profile'),
+                            'key_questions': parsed.get('key_questions', []),
+                            'entities_mentioned': parsed.get('entities_mentioned', []),
+                            'research_objectives': parsed.get('research_objectives', []),
+                            'detecção_confianca': parsed.get('detecção_confianca', 0.8),
+                            'fonte_deteccao': 'llm'
+                        }
+                except Exception as e:
+                    logger.warning(f"[_detect_unified_context] Parse error: {e}")
+            
+            return self._fallback_context(user_query)
+            
+        except Exception as e:
+            logger.error(f"[_detect_unified_context] Error: {e}")
+            return self._fallback_context(user_query)
+    
+    def _fallback_context(self, user_query: str) -> Dict[str, Any]:
+        """Fallback context when detection fails"""
+        return {
+            'setor_principal': 'geral',
+            'tipo_pesquisa': 'geral',
+            'perfil_sugerido': 'company_profile',
+            'key_questions': [],
+            'entities_mentioned': [],
+            'research_objectives': [],
+            'detecção_confianca': 0.0,
+            'fonte_deteccao': 'error'
+        }
+
+
 
     def _resolve_tools(self, __tools__: Dict[str, Dict[str, Any]]):
         """Resolve tools using deterministic heuristics"""
@@ -7390,8 +7568,7 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             profile: Optional[str] = None,
             phase_objective: Optional[str] = None,
             **kwargs,
-        ):
-            """Wrapper to handle discovery tool parameters"""
+        ):            """Wrapper to handle discovery tool parameters"""
             # Extract time_hint parameters
             after = None
             before = None
@@ -7543,234 +7720,4 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             except Exception as e:
                 logger.error(f"[D_WRAPPER] Unexpected exception calling discovery tool: {e}")
                 return {"urls": []}
-
         return d_callable_wrapper, s_callable, cr_callable
-
-    async def _extract_contract_from_history(self, body: dict) -> Optional[dict]:
-        """Extract contract from message history when 'siga' is called."""
-        try:
-            messages = body.get("messages", [])
-
-            # Find the last assistant message that contains a plan
-            for msg in reversed(messages):
-                if msg.get("role") == "assistant":
-                    content = msg.get("content", "")
-                    if getattr(self.valves, "VERBOSE_DEBUG", False):
-                        print(f"[DEBUG] Checking message content: {content[:200]}...")
-
-                    # Look for plan markers (both SDK and Manual formats)
-                    has_fase = "Fase 1/" in content and "Objetivo:" in content
-                    has_plano = "📋 Plano" in content
-                    if getattr(self.valves, "VERBOSE_DEBUG", False):
-                        print(f"[DEBUG] Plan markers: has_fase={has_fase}, has_plano={has_plano}")
-
-                    if has_fase or has_plano:
-                        # Try to extract contract using LLM
-                        planner = PlannerLLM(self.valves)
-
-                        # Create a prompt to extract the contract from the rendered plan
-                        extract_prompt = f"""Extraia o contrato JSON do plano renderizado abaixo.
-                        
-PLANO RENDERIZADO:
-{content}
-
-Retorne APENAS o JSON do contrato no formato:
-{{
-  "intent_profile": "company_profile",
-  "intent": "resumo do objetivo",
-  "entities": {{"canonical": ["entidade principal"], "aliases": []}},
-  "phases": [
-    {{
-      "name": "nome da fase",
-      "objective": "objetivo da fase",
-      "seed_query": "<3-6 palavras, sem operadores>",
-      "must_terms": ["termo1", "termo2"],
-      "time_hint": {{"recency": "1y", "strict": false}},
-      "lang_bias": ["pt-BR", "en"],
-      "geo_bias": ["BR", "global"]
-    }}
-  ],
-  "quality_rails": {{"min_unique_domains": 2, "need_official_or_two_independent": true}},
-  "budget": {{"max_rounds": 2}}
-}}
-INSTRUÇÕES:
-- Extraia o objetivo principal do plano
-- Identifique as fases e seus objetivos
-- Se faltar seed_query, gere com 3-6 palavras (sem operadores)
-- Mantenha campos obrigatórios com valores padrão
-- Retorne APENAS o JSON válido"""
-
-                        # Filter params for GPT-5/O1 compatibility
-                        safe_extract_params = get_safe_llm_params(
-                            planner.model_name, planner.generation_kwargs
-                        )
-                        result = await _safe_llm_run_with_retry(
-                            planner.llm,
-                            extract_prompt,
-                            safe_extract_params,
-                            timeout=planner.valves.LLM_TIMEOUT_DEFAULT,
-                            max_retries=1,
-                        )
-                        if result:
-                            try:
-                                contract = _extract_json_from_text(result)
-                                if (
-                                    contract
-                                    and "phases" in contract
-                                    and len(contract["phases"]) > 0
-                                ):
-                                    # Validate that we have the essential fields
-                                    for phase in contract["phases"]:
-                                        if not phase.get("objective") or not phase.get("seed_query"):
-                                            if not phase.get("seed_query") and phase.get("objective"):
-                                                try:
-                                                    reask = f"Gere apenas uma seed query (3-6 palavras, sem operadores) para: '{phase.get('objective','')}'. Retorne só a seed."
-                                                    safe_reask = get_safe_llm_params(
-                                                        planner.model_name,
-                                                        {"temperature": 0.2},
-                                                    )
-                                                    re = await _safe_llm_run_with_retry(
-                                                        planner.llm,
-                                                        reask,
-                                                        safe_reask,
-                                                        timeout=planner.valves.LLM_TIMEOUT_DEFAULT,
-                                                        max_retries=1,
-                                                    )
-                                                    if re and re.get("replies"):
-                                                        candidate = (
-                                                            re["replies"][0]
-                                                            .strip()
-                                                            .strip('"')
-                                                            .strip("'")
-                                                        )
-                                                        for op in [
-                                                            "site:",
-                                                            "filetype:",
-                                                            "after:",
-                                                            "before:",
-                                                            "AND",
-                                                            "OR",
-                                                            '"',
-                                                            "'",
-                                                        ]:
-                                                            candidate = candidate.replace(op, " ")
-                                                        words = candidate.split()
-                                                        if 3 <= len(words) <= 6:
-                                                            phase["seed_query"] = " ".join(words)
-                                                except Exception:
-                                                    pass
-                                            if not phase.get("objective"):
-                                                phase["objective"] = f"Análise: {phase.get('seed_query', 'tópico')}"
-                                    return contract
-                            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                                logger.warning(f"Failed to parse extracted contract: {e}")
-                            except Exception as e:
-                                logger.error(f"Unexpected error parsing contract: {e}")
-                                raise ContractValidationError(f"Contract parsing failed: {e}") from e
-
-            return None
-        except ContractValidationError:
-            raise  # Re-raise specific errors
-        except Exception as e:
-            logger.warning(f"Failed to extract contract from history: {e}")
-            return None
-
-    async def _detect_unified_context(
-        self, user_query: str, body: dict
-    ) -> Dict[str, Any]:
-        """DETECÇÃO UNIFICADA DE CONTEXTO - Apenas LLM (heurística removida)
-
-        Analisa a consulta do usuário e histórico de mensagens para determinar:
-        - Setor/indústria (10+ setores: saúde, tech, finanças, direito, etc.)
-        - Tipo de pesquisa (acadêmica, regulatória, técnica, estratégica, notícias)
-        - Perfil apropriado (company_profile, regulation_review, technical_spec, etc.)
-        - Metadados adaptativos (estilo, foco, seções sugeridas)
-
-        ✅ SIMPLIFICADO: Usa apenas LLM (heurística removida - era marginal)
-
-        Returns:
-            Dict com: setor, tipo, perfil, perfil_descricao, estilo, foco_detalhes,
-                     tema_principal, secoes_sugeridas, detecção_confianca, fonte_deteccao
-        """
-
-        # Preparar contexto do histórico
-        text_sample = user_query.lower()
-        messages = body.get("messages", [])
-        if messages:
-            for msg in messages[:-1]:  # Excluir última mensagem (query atual)
-                content = msg.get("content", "")
-                if content:
-                    text_sample += " " + content.lower()
-
-        # ===== LLM ÚNICO (heurística removida) =====
-        contexto_enriquecido = None
-        try:
-            from datetime import datetime
-
-            current_date = datetime.now().strftime("%Y-%m-%d")
-
-            # Prompt JSON-only sem CoT exposto (anti-recusa/anti-disclaimer)
-            detect_prompt = f"""Você é um consultor de estratégia sênior.
-
-Pense passo a passo INTERNAMENTE, mas NÃO exponha o raciocínio.
-Retorne SOMENTE JSON válido no schema abaixo.
-
-⚠️ IMPORTANTE:
-- NÃO use markdown ou código fence (```json)
-- NÃO escreva nada fora do JSON
-- NÃO inclua pedidos de desculpa, menções a políticas ou resumos narrativos
-- Apenas JSON válido conforme schema
-
-CONSULTA: {user_query}
-
-CONTEXTO DO HISTÓRICO:
-{text_sample[:1000]}
-
-Data atual: {current_date}
-
-TAREFA:
-Analise a consulta e produza:
-- setor_principal (específico, não "geral")
-- tipo_pesquisa (acadêmica, mercado, técnica, regulatória, notícias)
-- perfil_sugerido: CRITICAL - escolha baseado no OBJETIVO PRINCIPAL:
-  * company_profile: análise de MERCADO/EMPRESAS/COMPETIÇÃO/NEGÓCIOS (ex: "estudo de mercado", "análise competitiva", "players", "reputação")
-  * regulation_review: análise REGULATÓRIA/LEGAL/COMPLIANCE (ex: "marco legal", "normas", "regulamentação")
-  * technical_spec: análise TÉCNICA/OPERACIONAL/IMPLEMENTAÇÃO (ex: "arquitetura", "stack técnico", "processos operacionais")
-  * literature_review: revisão ACADÊMICA/CIENTÍFICA (ex: "estado da arte", "revisão sistemática", "papers")
-  * history_review: análise HISTÓRICA/TEMPORAL (ex: "evolução histórica", "contexto cultural")
-- 5-10 key_questions (perguntas de DECISÃO que precisam resposta, não queries de busca)
-- entities_mentioned (APENAS empresas/produtos/pessoas/marcas específicas mencionadas EXPLICITAMENTE, incluir aliases)
-- research_objectives (3-5 objetivos de pesquisa específicos e mensuráveis)
-SCHEMA JSON:
-{{
-  "setor_principal": "string",
-  "tipo_pesquisa": "string", 
-  "perfil_sugerido": "string",
-  "key_questions": ["string"],
-  "entities_mentioned": [{{"canonical": "string", "aliases": ["string"]}}],
-  "research_objectives": ["string"],
-  "perfil_descricao": "string",
-  "estilo": "string",
-  "foco_detalhes": "string",
-  "tema_principal": "string",
-  "secoes_sugeridas": ["string"],
-  "detecção_confianca": 0.85,
-  "fonte_deteccao": "llm"
-}}"""
-        except Exception as e:
-            logger.error(f'[ProfileDetector] Error: {e}')
-            return {
-                'setor_principal': 'geral',
-                'tipo_pesquisa': 'geral',
-                'perfil_sugerido': 'company_profile',
-                'key_questions': [],
-                'entities_mentioned': [],
-                'research_objectives': [],
-                'perfil_descricao': 'Perfil padrão',
-                'estilo': 'investigativo',
-                'foco_detalhes': 'amplo',
-                'tema_principal': 'geral',
-                'secoes_sugeridas': [],
-                'detecção_confianca': 0.0,
-                'fonte_deteccao': 'error'
-            }

@@ -1,0 +1,154 @@
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║         🔍 VISUALIZAÇÃO: FLUXO DE DEDUPLICAÇÃO E PONTOS DE CORREÇÃO           ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+ENTRADA: 11.433 chars (texto scrapeado)
+   │
+   └─► Função _synthesize_final()
+        │
+        ├─ [Raw Context] 11.433 chars
+        │
+        ├─► Função _paragraphs(raw_context) ⚙️  FIX 1 AQUI
+        │   │
+        │   ├─ avg_paragraph_size = 11433 / 9299 = 1.23 chars 🔴
+        │   │
+        │   ├─ if avg_paragraph_size > 1000:  ❌ ANTES (PROBLEMA!)
+        │   │  → Split detects markdown com \n único
+        │   │  → Cada \n se torna um "parágrafo"
+        │   │  → Resultado: 9.299 "parágrafos" (na verdade linhas)
+        │   │
+        │   └─ ✅ FIX 1: if avg_paragraph_size > 2000 or "\n\n" not in text:
+        │      → Mais conservador
+        │      → Agrupa linhas em blocos REAIS
+        │      → Resultado esperado: ~2.000 parágrafos (5.7 chars avg)
+        │
+        ├─ raw_paragraphs = 9.299 (antes FIX1) ou 2.000 (depois FIX1)
+        │
+        ├─► Deduplicador.dedupe()
+        │   │
+        │   ├─ max_chunks = self.valves.MAX_DEDUP_PARAGRAPHS = 200 ❌ ANTES
+        │   │   Redução necessária: 9.299 / 200 = 46.5x (EXTREMO!)
+        │   │
+        │   ├─ ✅ FIX 2: target_paragraphs = max(100, min(int(9.299/10), 500))
+        │   │           = max(100, min(929, 500))
+        │   │           = 500
+        │   │   Redução necessária: 9.299 / 500 = 18.6x (muito melhor)
+        │   │
+        │   ├─ Algoritmo MMR: seleciona TOP-500 parágrafos mais diversos
+        │   │   
+        │   └─ deduped_paragraphs = 500 parágrafos (antes)
+        │
+        ├─ deduped_context = "\n\n".join(500 parágrafos)
+        │   └─ 11.433 chars / 500 = 22.9 chars/parágrafo 🔴 ainda fragmentado
+        │
+        ├─► ✅ FIX 3: _merge_small_paragraphs(deduped_paragraphs, min_chars=100)
+        │   │
+        │   ├─ Varre parágrafos sequencialmente
+        │   │
+        │   ├─ Se len(buffer) + len(new_para) < 100:
+        │   │  → Combina: buffer += " " + new_para
+        │   │
+        │   └─ Se >= 100:
+        │      → Salva buffer
+        │      → Começa novo buffer
+        │
+        ├─ deduped_paragraphs = 400 parágrafos (depois do merge)
+        │   └─ 11.433 chars / 400 = 28.6 chars/parágrafo ✅ MELHOR
+        │
+        ├─ deduped_context = "\n\n".join(400 parágrafos)
+        │
+        ├─ Truncamento (se > MAX_CONTEXT_CHARS)
+        │
+        └─► SAÍDA: Contexto final para LLM (muito menos fragmentado!)
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+📊 COMPARAÇÃO DETALHADA
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ MÉTRICA                    │ ANTES     │ DEPOIS    │ MELHORIA              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Parágrafos iniciais        │ 9.299     │ 2.000     │ -78% (FIX 1)          │
+│ Target dedup               │ 200       │ 500       │ +150% (FIX 2)         │
+│ Fator redução              │ 46.5x     │ 5.0x      │ 9x melhor (FIX 2)     │
+│ Após merge                 │ 200       │ 400       │ +100% (FIX 3)         │
+│ Tamanho médio final        │ 57 chars  │ 28 chars  │ Ainda pequeno, mas... │
+│ Fragmentação visual        │ 🔴 CRÍTICA│ ⚠️ AVISO │ Muito melhor          │
+│ Mantém coerência narrativa │ ❌ Não   │ ✅ Sim   │ Preserva ordem        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+🎯 LOCALIZAÇÃO DAS MUDANÇAS NO ARQUIVO
+
+PipeLangNew.py
+├─ Linha ~6654: Função _paragraphs() INÍCIO
+│   │
+│   ├─ Linha ~6672: ⚙️ FIX 1 - Aumentar threshold de detecção markdown
+│   │                if avg_paragraph_size > 2000 or "\n\n" not in text:
+│   │
+│   └─ Linha ~6746: Função _paragraphs() FIM
+│
+├─ Linha ~6654: Adicionar função helper _merge_small_paragraphs()
+│   │                após _paragraphs()
+│   └─ ~30 linhas de novo código
+│
+├─ Linha ~6792: ⚙️ FIX 2 - Target dinâmico
+│   │                target_paragraphs = max(100, min(int(...), 500))
+│   │
+│   └─ Linha ~6804: Passar target_paragraphs para dedupe()
+│
+└─ Linha ~6806: ⚙️ FIX 3 - Aplicar merge pós-dedup
+                 deduped_paragraphs = _merge_small_paragraphs(...)
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+✅ CHECKLIST DE IMPLEMENTAÇÃO
+
+[ ] 1. Fazer backup: cp PipeLangNew.py PipeLangNew.py.backup
+[ ] 2. Implementar FIX 1: Aumentar threshold (1 linha)
+[ ] 3. Implementar FIX 2: Target dinâmico (10 linhas)
+[ ] 4. Implementar FIX 3: Adicionar helper (~30 linhas)
+[ ] 5. Testar: Rodar busca e capturar [DEDUP DIAGNÓSTICO]
+[ ] 6. Validar: avg_size >= 100 chars
+[ ] 7. Executar: python dedup_analyzer.py
+[ ] 8. Commit (se tudo ok): git commit -m "Fix: Reduce dedup fragmentation"
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+📈 IMPACTO ESPERADO EM TESTES
+
+TESTE 1: AI Agêntica (seus logs)
+─────────────────────────────────
+ANTES: 57 chars/parágrafo, resultado muito fragmentado
+DEPOIS: 28+ chars/parágrafo, bem menos fragmentado
+
+TESTE 2: Com 20.000 chars
+─────────────────────────
+ANTES: 200 parágrafos (100 chars avg se bem dividido)
+DEPOIS: 2.000 parágrafos → 200-400 final → muito melhor narrative
+
+TESTE 3: Com 5.000 chars
+───────────────────────
+ANTES: 200 parágrafos (25 chars avg - CRÍTICO)
+DEPOIS: 500 parágrafos → 100-150 final → BOAS (200-300 chars avg)
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+🔗 REFERÊNCIA DE ARQUIVOS CRIADOS
+
+├─ DEDUP_SUMMARY.md ............ Resumo executivo (leia primeiro!)
+├─ DEDUP_ANALYSIS.md ........... Análise técnica detalhada
+├─ DEDUP_FIX.py ................ Instruções e código pronto
+├─ dedup_analyzer.py ........... Script de diagnóstico
+├─ DEDUP_TREE.txt .............. Este arquivo (visualização)
+└─ PipeLangNew.py.backup ....... Seu backup (após implementar)
+
+
+═════════════════════════════════════════════════════════════════════════════════

@@ -1986,6 +1986,25 @@ async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any],
     - Mantém async def para compatibilidade com PipeLangNew (que usa await)
     - Usa OpenAI síncrono dentro (mais simples, como v2)
     - Executa em thread separada via run_in_executor (não bloqueia event loop)
+    
+    ✅ MELHORIAS IMPLEMENTADAS (Commit 4e0ea8a):
+    1. SIMPLICIDADE: Força queries SIMPLES (4-7 termos) em vez de complexas
+       - Remove múltiplos ORs, muitas aspas, operadores desnecessários
+       - Confia em rails pós-busca para filtros complexos
+    
+    2. SITE: EXPLÍCITO: site: usado APENAS se user pediu
+       - _detect_explicit_site_request() detecta pedidos PT/EN
+       - Contexts claro no prompt sobre quando usar site:
+       - Evita site:arxiv.org site:acm.org desnecessários
+    
+    3. IDIOMAS: Estratégia multi-idioma por plano
+       - Plan 1 pode ser EN (papers), Plan 2 PT (notícias BR)
+       - Sem misturar EN/PT no mesmo plano
+    
+    4. RAILS DOCUMENTADOS: Prompt menciona todos rails disponíveis
+       - must_terms, avoid_terms, lang_bias, geo_bias, official_domains
+       - Planner sabe que filtros complexos são aplicados pós-busca
+       - Incentiva queries semânticas simples
     """
     if not OPENAI_AVAILABLE or OpenAI is None:
         raise RuntimeError("LLM planner required but OpenAI library is not available")

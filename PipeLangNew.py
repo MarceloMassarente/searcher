@@ -6215,13 +6215,13 @@ class Pipe:
                     yield f"- ❌ langgraph não pode ser importado: {e}\n"
                 
                 try:
-                    from langgraph.graph import StateGraph
+                    from langgraph.graph import StateGraph as _DBG_SG
                     yield f"- ✅ StateGraph importado com sucesso\n"
                 except ImportError as e:
                     yield f"- ❌ StateGraph não pode ser importado: {e}\n"
                 
                 try:
-                    from langgraph.checkpoint.memory import MemorySaver
+                    from langgraph.checkpoint.memory import MemorySaver as _DBG_MS
                     yield f"- ✅ MemorySaver importado com sucesso\n"
                 except ImportError as e:
                     yield f"- ❌ MemorySaver não pode ser importado: {e}\n"

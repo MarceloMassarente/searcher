@@ -4725,6 +4725,38 @@ class ResearchStateModel(BaseModel):
 # ============================================================================
 # 3. NODE WRAPPERS (Chamam código existente)
 # ============================================================================
+
+# ============================================================================
+# 2. GRAPH BUILDER
+# ============================================================================
+
+def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
+    """Builds and compiles the research LangGraph workflow."""
+    if not LANGGRAPH_AVAILABLE:
+        raise ImportError("LangGraph not available. Install: pip install langgraph>=0.3.5")
+    
+    workflow = StateGraph(ResearchState)
+    nodes = GraphNodes(valves, discovery_tool, scraper_tool, context_reducer_tool)
+    
+    # Add nodes
+    workflow.add_node("discovery", nodes.discovery_node)
+    workflow.add_node("scrape", nodes.scrape_node)
+    workflow.add_node("reduce", nodes.reduce_node)
+    workflow.add_node("analyze", nodes.analyze_node)
+    workflow.add_node("judge", nodes.judge_node)
+    
+    workflow.set_entry_point("discovery")
+    workflow.add_edge("discovery", "scrape")
+    workflow.add_edge("scrape", "reduce")
+    workflow.add_edge("reduce", "analyze")
+    workflow.add_edge("analyze", "judge")
+    workflow.add_conditional_edges("judge", lambda s: "discovery" if s.get("verdict") != "done" else END)
+    
+    memory = MemorySaver()
+    return workflow.compile(checkpointer=memory)
+
+
+
 class GraphNodes:
     """Wrappers FINOS - delegam para código existente (ex-Orchestrator)"""
     

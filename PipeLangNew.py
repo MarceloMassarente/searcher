@@ -4775,10 +4775,10 @@ class GraphNodes:
         self.scraper_tool = scraper_tool
         self.context_reducer_tool = context_reducer_tool
         
-        # Instanciar LLM components
-        self.analyst = None
-        self.judge = None
-        self.deduplicator = None
+        # Initialize LLM components
+        self.analyst = AnalystLLM(self.valves)
+        self.judge = JudgeLLM(self.valves)
+        self.deduplicator = Deduplicator(self.valves)
     
     async def discovery_node(self, state: ResearchState) -> Dict:
         """Discovery node - complete implementation from Orchestrator._run_discovery"""

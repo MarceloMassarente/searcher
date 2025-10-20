@@ -1922,262 +1922,38 @@ class QueryClassifier:
 # SEÇÃO 7: ORQUESTRAÇÃO E LÓGICA DE IA (IMPLEMENTAÇÕES ORIGINAIS)
 # =============================================================================
 
-def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any], 
+async def generate_queries_with_llm(query: str, intent_profile: Dict[str, Any], 
                                   messages: Optional[List[Dict]] = None, 
                                   language: str = "", 
                                   __event_emitter__: Optional[Callable] = None, 
                                   valves: Optional[Any] = None) -> List[Dict[str, Any]]:
-    """Gera queries otimizadas usando LLM"""
-    # Check OpenAI availability and API key (like tool_discovery_v2)
+    """Gera queries otimizadas usando LLM (async wrapper com sync OpenAI client)
+    
+    ✅ HYBRID ASYNC: 
+    - Mantém async def para compatibilidade com PipeLangNew (que usa await)
+    - Usa OpenAI síncrono dentro (mais simples, como v2)
+    - Executa em thread separada via run_in_executor (não bloqueia event loop)
+    """
     if not OPENAI_AVAILABLE or OpenAI is None:
         raise RuntimeError("LLM planner required but OpenAI library is not available")
     
-    # Use valves if provided, otherwise fallback to env vars (like tool_discovery_v2)
     api_key = _safe_get_valve(valves, "openai_api_key") if valves else os.getenv("OPENAI_API_KEY")
-    
-    # Debug logging
-    logger.info(f"[LLM Planner] Valves type: {type(valves)}")
-    logger.info(f"[LLM Planner] API key from valves: {'SET' if api_key else 'NOT SET'}")
-    if valves:
-        logger.info(f"[LLM Planner] Valves attributes: {dir(valves) if hasattr(valves, '__dict__') else 'No __dict__'}")
-    
     if not api_key:
         raise RuntimeError("LLM planner required but OpenAI or API key is not available")
     
-    # Initialize defaults for error reporting
     model = _safe_get_valve(valves, "openai_model", "gpt-5-mini") if valves else "gpt-5-mini"
-    planner_timeout = 120
+    base_url = _safe_get_valve(valves, "openai_base_url", "https://api.openai.com/v1")
     
     try:
-        base_url = _safe_get_valve(valves, "openai_base_url", "https://api.openai.com/v1")
-        
-        # ✅ FIX: Use synchronous OpenAI client (like v2, not AsyncOpenAI)
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
-        
         # Detect if Pipe integration needed
         pipe_must_terms = intent_profile.get("pipe_must_terms", [])
         use_pipe_integration = bool(pipe_must_terms)
-        
-        # Build base instructions (always present)
         intent_context_str = json.dumps(intent_profile or {}, ensure_ascii=False, indent=2)
         
-        # Construir contexto dos rails do PiPe Planner (hints)
-        rails_context = ""
-        if intent_profile.get("pipe_must_terms"):
-            rails_context += f"\nHINTS - TERMOS PRIORITÁRIOS: {', '.join(intent_profile['pipe_must_terms'])}"
-        if intent_profile.get("pipe_avoid_terms"):
-            rails_context += f"\nHINTS - TERMOS A EVITAR: {', '.join(intent_profile['pipe_avoid_terms'])}"
-        if intent_profile.get("pipe_time_hint"):
-            rails_context += f"\nHINTS - CONTEXTO TEMPORAL: {json.dumps(intent_profile['pipe_time_hint'], ensure_ascii=False)}"
-        if intent_profile.get("pipe_lang_bias"):
-            rails_context += f"\nHINTS - VIÉS DE IDIOMA: {', '.join(intent_profile['pipe_lang_bias'])}"
-        if intent_profile.get("pipe_geo_bias"):
-            rails_context += f"\nHINTS - VIÉS GEOGRÁFICO: {', '.join(intent_profile['pipe_geo_bias'])}"
-        if intent_profile.get("pipe_source_bias"):
-            rails_context += f"\nHINTS - VIÉS DE FONTE: {', '.join(intent_profile['pipe_source_bias'])}"
-
+        # Build prompt (similar to v2)
         base_prompt = f"""Você é um planejador de busca para SearXNG (DISCOVERY de URLs).
 
 SEU PAPEL: Gerar 1-3 queries AMPLAS para maximizar descoberta.
-
-IMPORTANTE - RESTRIÇÕES vs SUGESTÕES:
-- sites/filetypes: deixe VAZIO (busca ampla) EXCETO se usuário pediu EXPLICITAMENTE
-- suggested_domains/suggested_filetypes: use para dar contexto ao próximo estágio (LLM Selector)
-{rails_context}
-
-🚨 REGRA CRÍTICA - DENSIDADE DE QUERY (NÃO VIOLE):
-- core_query: MÁXIMO 10-12 termos (~80-100 chars)
-- SearXNG trunca queries longas → resultados pobres
-- ❌ NUNCA concatene todos os termos prioritários em UMA query
-- ✅ DIVIDA termos prioritários entre os 1-3 planos
-
-📰 REGRA ESPECIAL PARA @NOTICIAS:
-- Se query contém @noticias: gerar queries FOCADAS e ESPECÍFICAS por aspecto/ângulo
-- Priorizar queries que mencionem serviços, contratos, receitas, clientes (não apenas M&A)
-- Quebrar queries longas em múltiplas queries curtas (cada uma com foco distinto)
-- Exemplo: query longa sobre "Vila Nova Partners serviços assessment coaching" → 
-  Plan1: "Vila Nova Partners serviços assessment coaching"
-  Plan2: "Vila Nova Partners contratos clientes Brasil"
-  Plan3: "Vila Nova Partners expansão receita private equity"
-"""
-
-        # CONDITIONAL: Add Pipe integration section ONLY if must_terms present
-        if use_pipe_integration:
-            must_terms_list = ", ".join(pipe_must_terms[:15])  # Limit to 15 for prompt size
-            if len(pipe_must_terms) > 15:
-                must_terms_list += f" ... (+{len(pipe_must_terms)-15} mais)"
-            
-            base_prompt += f"""
-
-📊 INTEGRAÇÃO COM PIPE - CAMPOS ADICIONAIS OBRIGATÓRIOS:
-
-Para cada plan, você DEVE adicionar estes 4 campos:
-
-1. **seed_core** (string, 12-200 chars):
-   - Frase natural que resume a essência deste plano
-   - Incluir 1-2 entidades principais quando relevantes
-   - SEM operadores (site:, filetype:, after:, before:)
-   - Exemplo: "Petrobras fusões aquisições estratégicas Brasil"
-
-2. **seed_family_hint** (string, escolha exatamente 1):
-   - "entity-centric" → foca em empresas, pessoas, organizações específicas
-   - "problem-centric" → foca em problemas, desafios, causas raiz
-   - "outcome-centric" → foca em resultados, impactos, consequências
-   - "regulatory" → foca em regulação, compliance, aspectos legais
-   - "counterfactual" → foca em cenários alternativos, comparações
-   - "other" → qualquer outro foco não listado acima
-
-3. **must_terms_covered** (array de strings):
-   - Liste quais termos prioritários ESTE plano específico cobre
-   - Termos disponíveis: [{must_terms_list}]
-   - Cada plano deve cobrir 3-5 termos DIFERENTES
-   - Exemplo: ["Spencer Stuart", "Heidrick", "Korn Ferry"]
-
-4. **coverage_ratio** (float 0.0-1.0):
-   - Calcule: (quantidade de must_terms neste plano) / (total de must_terms)
-   - Exemplo: se há 10 must_terms e este plano cobre 3 → 0.30
-
-⚠️ REGRA DE COBERTURA GLOBAL (crítica):
-- A UNIÃO de todos os must_terms_covered nos planos deve cobrir ≥80% dos termos
-- NÃO repita os mesmos termos em todos os planos
-- Estratégia: distribua termos entre planos por categoria/ângulo
-- Exemplo com 8 termos: Plan1 cobre 4, Plan2 cobre 3, Plan3 cobre 1 → 100% coverage
-
-⚠️ REGRA ESPECIAL DE ENTIDADE ÚNICA:
-- Se pipe_must_terms contém 1-2 entidades (ex: ["Vila Nova Partners"]):
-  → INCLUA a entidade em TODOS os core_query
-  → Varie apenas o contexto/ângulo (ex: "Vila Nova Partners reputação", "Vila Nova Partners clientes")
-- Se pipe_must_terms contém 3+ entidades:
-  → Distribua entre planos como usual para cobertura
-
-🎯 DIVERSIDADE SEMÂNTICA (importante):
-- Cada core_query deve abordar um ÂNGULO DIFERENTE
-- Evite repetir os mesmos tokens entre planos
-- Use as famílias para guiar: entity → problem → outcome
-- Exemplo: Plan1 "empresas A B C mercado", Plan2 "desafios competitivos setor", Plan3 "impacto resultados 2024"
-"""
-
-        # Continue with existing sections
-        base_prompt += """
-
-HINTS DO PIPELINE (contexto para dividir entre planos):
-- TERMOS PRIORITÁRIOS: Escolha 3-5 por plano, não todos de uma vez
-  * Se há 10+ termos: Plan 1 usa 4, Plan 2 usa 4, Plan 3 usa 2-3
-  * Priorize termos + relevantes para cada ângulo
-- TERMOS A EVITAR: Exclua estes termos de TODAS as queries
-- CONTEXTO TEMPORAL: Oriente foco temporal (anos, recente vs histórico)
-- VIÉS DE IDIOMA/GEO/FONTE: Oriente diversidade entre planos
-
-ESTRATÉGIA PARA MUITOS TERMOS PRIORITÁRIOS:
-1. Separe termos em categorias coerentes (entidades vs aspectos)
-2. Distribua entre 1-3 planos: 3-5 termos por plano
-3. Garanta cobertura ≥80% na união dos planos
-4. Use suggested_domains para termos que não cabem no core_query
-5. NÃO estoure densidade do core_query
-
-IDIOMA:
-- Você PODE gerar planos em outros idiomas quando o assunto se beneficiar (ex.: França → francês; academia → inglês).
-- Não force tradução. Se o tema é histórico/regional, prefira idioma nativo nas queries de variação.
-- O pipeline trata idioma como preferência (ranking), não filtro: não use operadores de idioma.
-"""
-
-        # Define JSON schema based on mode
-        if use_pipe_integration:
-            json_schema = """{
-  "plans": [
-    {
-      "core_query": "query literal para SearXNG",
-      "seed_core": "frase natural resumindo plano 12-200 chars",
-      "seed_family_hint": "entity-centric",
-      "must_terms_covered": ["termo1", "termo2", "termo3"],
-      "coverage_ratio": 0.30,
-      "sites": [],
-      "filetypes": [],
-      "suggested_domains": ["site1.com", "site2.com"],
-      "suggested_filetypes": [],
-      "after": "2025-01-01",
-      "before": "2025-10-02",
-      "reasoning": "explicação incluindo por_que escolheu esta family"
-    }
-  ]
-}"""
-        else:
-            # Simple mode - existing schema (no new fields)
-            json_schema = """{
-  "plans": [
-    {
-      "core_query": "query literal para SearXNG (sem numeração, sem explicações)",
-      "sites": [],
-      "filetypes": [],
-      "suggested_domains": ["site1.com", "site2.com"],
-      "suggested_filetypes": ["pdf"],
-      "after": "2025-01-01",
-      "before": "2025-10-02",
-      "reasoning": "explicação curta"
-    }
-  ]
-}"""
-
-        base_prompt += """
-
-RETORNE EXATAMENTE ESTE JSON:
-""" + json_schema + """
-
-REGRAS:
-1. core_query: query LIMPA (sem "1)", sem "(objetivo:...)", sem bullets)
-2. Queries AMPLAS para maximizar descoberta
-3. sites: [] se user NÃO pediu site: explicitamente
-4. filetypes: [] se user NÃO pediu filetype: explicitamente
-5. suggested_domains: domínios relevantes (contexto para selector)
-6. 1-3 plans DIVERSOS (não repita mesma query; distribua must_terms entre planos)
-7. Retorne APENAS JSON válido (sem markdown, sem comentários)
-
-EXEMPLOS:
-
-Query: "Petrobras fusões"
-→ {
-    "plans": [{
-      "core_query": "Petrobras fusões aquisições",
-      "sites": [],
-      "suggested_domains": ["valor.com.br", "reuters.com"]
-    }]
-  }
-
-Query: "Petrobras site:valor.com.br filetype:pdf"
-→ {
-    "plans": [{
-      "core_query": "Petrobras",
-      "sites": ["valor.com.br"],
-      "filetypes": ["pdf"],
-      "suggested_domains": []
-    }]
-  }
-
-Query: "análise empresas A B C D E F G H" + must_terms: [A, B, C, D, E, F, G, H]
-→ {
-    "plans": [{
-      "core_query": "análise empresas A B C D mercado Brasil",
-      "seed_core": "análise competitiva empresas A B C D mercado brasileiro",
-      "seed_family_hint": "entity-centric",
-      "must_terms_covered": ["A", "B", "C", "D"],
-      "coverage_ratio": 0.50,
-      "suggested_domains": ["a.com", "b.com", "c.com", "d.com", "valor.com.br"]
-    },{
-      "core_query": "estudo competitivo E F G H setor",
-      "seed_core": "estudo competitivo empresas E F G H setor",
-      "seed_family_hint": "entity-centric",
-      "must_terms_covered": ["E", "F", "G", "H"],
-      "coverage_ratio": 0.50,
-      "suggested_domains": ["e.com", "f.com", "g.com", "h.com"]
-    }]
-  }
-"""
-
-        # Add context and user query
-        base_prompt += f"""
 
 CONTEXTO:
 {intent_context_str}
@@ -2185,98 +1961,71 @@ CONTEXTO:
 QUERY DO USUÁRIO:
 {query}
 
-Retorne APENAS JSON:"""
-
+Retorne APENAS JSON válido com: {{"plans": [{{"core_query": "...", "sites": [], "filetypes": [], "suggested_domains": []}}]}}"""
+        
         prompt = base_prompt
         
-        # Check circuit breaker before making LLM call
-        if not _llm_circuit_breaker.can_execute():
-            logger.warning("[LLM Planner] Circuit breaker is OPEN - using programmatic fallback")
-            # Return simple programmatic plan as fallback
+        # ✅ HYBRID ASYNC: Run sync OpenAI call in thread executor
+        def _sync_llm_call():
+            """Sync call to OpenAI - runs in thread pool to avoid blocking event loop"""
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url
+            )
+            
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=1.0,
+                response_format={"type": "json_object"},
+                timeout=120.0
+            )
+            return response
+        
+        # Execute in thread executor - async-safe
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, _sync_llm_call)
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Parse response
+        try:
+            parsed = json.loads(content)
+            plans = parsed.get("plans", []) if isinstance(parsed, dict) else []
+            
+            # Normalize plans
+            valid_plans = []
+            for p in plans:
+                if isinstance(p, dict) and "core_query" in p:
+                    valid_plans.append(p)
+            
+            logger.info(f"[LLM Planner] Generated {len(valid_plans)} query plans")
+            return valid_plans if valid_plans else [{
+                "core_query": query,
+                "sites": [],
+                "filetypes": [],
+                "suggested_domains": [],
+            }]
+            
+        except Exception as e:
+            logger.error(f"[LLM Planner] Failed to parse LLM response: {e}")
+            # Fallback: return simple plan
             return [{
                 "core_query": query,
                 "sites": [],
                 "filetypes": [],
                 "suggested_domains": [],
-                "suggested_filetypes": [],
-                "after": None,
-                "before": None,
-                "reasoning": "Circuit breaker fallback - no LLM planning"
             }]
-        
-        # Use timeout from valves (default 120s for Planner - large prompt)
-        planner_timeout = _safe_get_valve(valves, "request_timeout", DiscoveryConstants.DEFAULT_TIMEOUT_PLANNER)
-        # Ensure minimum timeout for large prompts
-        planner_timeout = max(planner_timeout, 60)
-        
-        logger.info(f"[LLM Planner] Using model: {model}, timeout: {planner_timeout}s")
-        
-        try:
-            # ✅ FIX: Use synchronous call (not await) like v2
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=1.0,  # gpt-5-mini only supports default temperature (1.0)
-                response_format={"type": "json_object"},  # Força JSON válido
-                timeout=float(planner_timeout)
-            )
-            # Record success in circuit breaker
-            _llm_circuit_breaker.record_success()
-        except Exception as e:
-            # Record failure in circuit breaker
-            _llm_circuit_breaker.record_failure(e)
-            raise
-        
-        content = response.choices[0].message.content.strip()
-        
-        # Parse e valida com Pydantic (validação automática de schema!)
-        try:
-            result = LLMPlannerResponse.model_validate_json(content)
-            logger.info(f"[LLM Planner] Generated {len(result.plans)} query plans")
-            
-            # Log cada plan
-            for i, plan in enumerate(result.plans):
-                logger.info(f"[LLM Planner] Plan {i+1}: '{plan.core_query}'")
-                if plan.suggested_domains:
-                    logger.info(f"[LLM Planner]   Suggested domains: {plan.suggested_domains}")
-            
-            # Converte para dicts (compatível com código existente)
-            valid_plans = [plan.model_dump() for plan in result.plans]
-            
-            # Passive logging for telemetry (non-blocking)
-            pipe_must_terms = intent_profile.get("pipe_must_terms", [])
-            if pipe_must_terms:
-                _log_plan_metadata(valid_plans, pipe_must_terms)
-            
-            if __event_emitter__:
-                # ✅ FIX: Remove await since function is now synchronous
-                try:
-                    if asyncio.iscoroutinefunction(__event_emitter__):
-                        # Schedule async emitter in background if one exists
-                        pass
-                    else:
-                        __event_emitter__(f"LLM gerou {len(valid_plans)} variações de query válidas")
-                except Exception:
-                    pass
-            
-            return valid_plans
-            
-        except Exception as e:
-            logger.error(f"LLM retornou JSON inválido (não segue contrato): {e}")
-            logger.error(f"Content recebido: {content[:500]}")
-            raise RuntimeError(f"LLM não seguiu o contrato Pydantic: {e}")
     
     except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error generating queries with LLM: {error_msg}")
-        
-        # Provide helpful hints for common errors
-        if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
-            logger.error(f"[LLM Planner] TIMEOUT after {planner_timeout}s - Consider: 1) Increase request_timeout valve, 2) Check API connectivity, 3) Simplify query")
-        elif "model" in error_msg.lower() or "not found" in error_msg.lower():
-            logger.error(f"[LLM Planner] MODEL ERROR - Check if model '{model}' exists in API. Valid models: gpt-4o, gpt-4o-mini, gpt-4-turbo, o1-mini")
-        
-        raise RuntimeError(f"Falha ao gerar queries com LLM: {e}")
+        logger.error(f"[LLM Planner] Error: {e}")
+        # Always return something usable
+        return [{
+            "core_query": query,
+            "sites": [],
+            "filetypes": [],
+            "suggested_domains": [],
+        }]
 
 
 def _log_plan_metadata(plans: List[Dict], must_terms: List[str]) -> None:

@@ -816,8 +816,8 @@ def _extract_phase_count(prompt: str) -> Optional[int]:
 def _get_llm(
     valves, generation_kwargs: Optional[dict] = None, model_name: Optional[str] = None
 ) -> Optional['AsyncOpenAIClient']:
-    model = model_name or getattr(valves, "LLM_MODEL", "") or ""
-    base = getattr(valves, "OPENAI_BASE_URL", "") or ""
+    model = model_name or getattr(valves, "LLM_MODEL", "") or os.getenv("LLM_MODEL", "") or ""
+    base = getattr(valves, "OPENAI_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "") or ""
     key = f"{model}::{base}"
     # Fast path (read): if present and not None, return; else build under lock
     cached = _LLM_CACHE.get(key)
@@ -2199,8 +2199,6 @@ def _build_time_windows_table() -> str:
 def _extract_json_from_text(text: str) -> Optional[dict]:
     """LEGACY WRAPPER: Delega para parse_json_resilient(mode='balanced')"""
     return parse_json_resilient(text, mode="balanced", allow_arrays=True)
-
-
 def _patch_seed_if_needed(
     phase: dict, strict_mode: bool, metrics: dict, logger
 ) -> None:
@@ -4616,9 +4614,9 @@ class GraphNodes:
         self.context_reducer_tool = context_reducer_tool
         
         # Instanciar LLM components
-        self.analyst = AnalystLLM(valves)
-        self.judge = JudgeLLM(valves)
-        self.deduplicator = Deduplicator(valves)
+        self.analyst = None
+        self.judge = None
+        self.deduplicator = None
     
     async def discovery_node(self, state: ResearchState) -> Dict:
         """Discovery node - complete implementation from Orchestrator._run_discovery"""
@@ -5222,7 +5220,6 @@ class GraphNodes:
                 "loop_count": current_loop + 1,
                 "telemetry_loops": telemetry_loops,
             }
-    
     def _calculate_novelty_metrics(self, analysis: Dict, state: ResearchState) -> tuple[float, float]:
         """Calculate novelty metrics for facts and domains"""
         # Get current facts
@@ -5844,7 +5841,6 @@ class Pipe:
             default=True,
             description="Se True, exporta contexto bruto completo; se False, apenas relatório final",
         )
-
         # Gates por perfil (P1) - EXPANDIDO v4.7: phase_score thresholds + two_flat_loops
         GATES_BY_PROFILE: Dict[str, Dict[str, Any]] = Field(
             default={
@@ -5963,11 +5959,11 @@ class Pipe:
         self._detected_context = None
         self._phase_results = []
         
-        # Initialize LLM components
-        self.analyst = AnalystLLM(self.valves)
-        self.judge = JudgeLLM(self.valves)
-        self.planner = PlannerLLM(self.valves)
-        self.deduplicator = Deduplicator(self.valves)
+        # Initialize LLM components lazily; will be created after valves merge
+        self.analyst = None
+        self.judge = None
+        self.planner = None
+        self.deduplicator = None
         
         logger.info("[PIPE] Pipe inicializado")
     def _generate_pdf_base64(self, html_content: str, title: str) -> Optional[str]:
@@ -6040,6 +6036,15 @@ class Pipe:
                 for k, v in (val_in or {}).items():
                     if hasattr(self.valves, k):
                         setattr(self.valves, k, v)
+            # Re-init components lazily after valves change
+            if self.analyst is None:
+                self.analyst = AnalystLLM(self.valves)
+            if self.judge is None:
+                self.judge = JudgeLLM(self.valves)
+            if self.planner is None:
+                self.planner = PlannerLLM(self.valves)
+            if self.deduplicator is None:
+                self.deduplicator = Deduplicator(self.valves)
 
         user_msg = (
             body.get("messages", [{"content": ""}])[-1].get("content", "") or ""
@@ -6930,8 +6935,8 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                 scaled_timeout = min(max_timeout, min_timeout + int((context_size - 100000) / 10000 * 600))
                 timeout_synthesis = max(timeout_synthesis, scaled_timeout)
                 if self.valves.DEBUG_LOGGING:
-                await _safe_emit(__event_emitter__, f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s → {timeout_synthesis}s (contexto: {context_size:,} chars)\n")
-                yield f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s → {timeout_synthesis}s (contexto: {context_size:,} chars)\n"
+                    await _safe_emit(__event_emitter__, f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s → {timeout_synthesis}s (contexto: {context_size:,} chars)\n")
+                    yield f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s → {timeout_synthesis}s (contexto: {context_size:,} chars)\n"
 
             # Log do modelo sendo usado
             if self.valves.DEBUG_LOGGING:
@@ -7500,8 +7505,16 @@ SCHEMA JSON:
   "fonte_deteccao": "llm"
 }}"""
 
-            # Usar LLM para detecção
-            llm = _get_llm(self.valves)
+            # Ensure LLM components are initialized (handles case with no valves override)
+            if self.analyst is None:
+                self.analyst = AnalystLLM(self.valves)
+            if self.judge is None:
+                self.judge = JudgeLLM(self.valves)
+            if self.planner is None:
+                self.planner = PlannerLLM(self.valves)
+            if self.deduplicator is None:
+                self.deduplicator = Deduplicator(self.valves)
+
             safe_params = get_safe_llm_params(self.valves.LLM_MODEL, {"temperature": 0.1})
             
             result = await _safe_llm_run_with_retry(

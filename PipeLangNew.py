@@ -189,6 +189,9 @@ class ResearchState(TypedDict, total=False):
     
     # Human-in-the-loop
     human_feedback: Optional[str]
+    
+    # Context detection
+    detected_context: Optional[Dict[str, Any]]
     needs_clarification: bool
     
     # SÃ­ntese final
@@ -684,6 +687,65 @@ def handle_interrupt_resume(state: dict, user_input: dict = None) -> dict:
 
 # ============ MULTI-AGENT NODES ============
 
+async def context_detection_node(state: ResearchState, pipe_instance) -> ResearchState:
+    """
+    CONTEXT DETECTION: Detectar contexto da pesquisa
+    - Analisar query do usuário
+    - Determinar setor, tipo, perfil
+    - Adicionar contexto ao state
+    """
+    query = state.get("user_query", "")
+    correlation_id = state.get("correlation_id", "unknown")
+    
+    logger.info(f"[CONTEXT_DETECTION][{correlation_id}] Detectando contexto para: '{query}'")
+    
+    try:
+        # Simular detecção de contexto (em produção, chamaria _detect_unified_context)
+        detected_context = {
+            'setor_principal': 'geral',
+            'tipo_pesquisa': 'geral', 
+            'perfil_sugerido': 'company_profile',
+            'key_questions': [],
+            'research_objectives': [],
+            'detecção_confianca': 0.8,
+            'fonte_deteccao': 'langgraph'
+        }
+        
+        # Adicionar contexto ao state
+        state['detected_context'] = detected_context
+        state['goto'] = 'coordinator'
+        
+        logger.info(f"[CONTEXT_DETECTION][{correlation_id}] Contexto detectado: {detected_context}")
+        
+        # Telemetria
+        telemetry_sink(state, "context_detection_complete", {
+            "sector": detected_context.get('setor_principal'),
+            "profile": detected_context.get('perfil_sugerido'),
+            "confidence": detected_context.get('detecção_confianca'),
+            "success": True
+        })
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"[CONTEXT_DETECTION][{correlation_id}] Error: {e}")
+        
+        # Fallback context
+        fallback_context = {
+            'setor_principal': 'geral',
+            'tipo_pesquisa': 'geral',
+            'perfil_sugerido': 'company_profile',
+            'key_questions': [],
+            'research_objectives': [],
+            'detecção_confianca': 0.0,
+            'fonte_deteccao': 'fallback'
+        }
+        
+        state['detected_context'] = fallback_context
+        state['goto'] = 'coordinator'
+        
+        return state
+
 def coordinator_node(state: ResearchState) -> ResearchState:
     """
     COORDINATOR: Router inteligente
@@ -759,23 +821,37 @@ async def planner_node(state: ResearchState, valves) -> ResearchState:
     """
     query = state.get("user_query")
     correlation_id = state.get("correlation_id", "unknown")
+    detected_context = state.get("detected_context", {})
     
     logger.info(f"[PLANNER][{correlation_id}] Criando plano para: '{query}'")
+    logger.info(f"[PLANNER][{correlation_id}] Contexto detectado: {detected_context}")
     
-    # Chamar Planner LLM (reusa cÃ³digo existente)
+    # Chamar Planner LLM (reusa código existente)
     try:
-        # Simular plano para demonstração
+        # Usar contexto detectado para personalizar o plano
+        sector = detected_context.get('setor_principal', 'geral')
+        profile = detected_context.get('perfil_sugerido', 'company_profile')
+        
+        # Simular plano para demonstração (em produção, chamaria PlannerLLM)
         plan = {
             "phases": [
                 {
-                    "objective": f"Pesquisar informações básicas sobre {query}",
+                    "objective": f"Pesquisar informações básicas sobre {query} no setor {sector}",
                     "key_terms": query.split()[:3],
-                    "seed_family": "entity-centric"
+                    "seed_family": "entity-centric",
+                    "context": {
+                        "sector": sector,
+                        "profile": profile
+                    }
                 },
                 {
                     "objective": f"Analisar aspectos comparativos de {query}",
-                    "key_terms": ["comparar", "diferenÃ§as", "vantagens"],
-                    "seed_family": "problem-centric"
+                    "key_terms": ["comparar", "diferenças", "vantagens"],
+                    "seed_family": "problem-centric",
+                    "context": {
+                        "sector": sector,
+                        "profile": profile
+                    }
                 }
             ]
         }
@@ -6807,6 +6883,7 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     builder = StateGraph(ResearchState)
     
     # ===== ADICIONAR AGENTES =====
+    builder.add_node("context_detection", lambda s: context_detection_node(s, None))  # TODO: Pass pipe instance
     builder.add_node("coordinator", coordinator_node)
     builder.add_node("planner", lambda s: planner_node(s, valves))
     builder.add_node("researcher", lambda s: researcher_node(s, discovery_tool, scraper_tool))
@@ -6821,7 +6898,10 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     
     # ===== ENTRY POINT =====
     from langgraph.graph import START
-    builder.add_edge(START, "coordinator")
+    builder.add_edge(START, "context_detection")
+    
+    # ===== CONTEXT DETECTION FLOW =====
+    builder.add_edge("context_detection", "coordinator")
     
     # ===== ROTEAMENTO DINÃ‚MICO DO COORDINATOR =====
     builder.add_conditional_edges(
@@ -8344,7 +8424,7 @@ class Pipe:
                     initial_state = {
                         'user_query': last_msg,
                         'correlation_id': correlation_id,
-                        'goto': 'coordinator',
+                        'goto': 'context_detection',
                         'messages': [],
                         'discoveries': [],
                         'scraped_content': [],
@@ -8352,7 +8432,8 @@ class Pipe:
                         'current_phase': 0,
                         'total_phases': 1,
                         'needs_clarification': False,
-                        'human_feedback': None
+                        'human_feedback': None,
+                        'detected_context': None
                     }
                     
                     # Run Multi-Agent LangGraph workflow with streaming

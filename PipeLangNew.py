@@ -1155,6 +1155,16 @@ async def global_completeness_check_node(state: ResearchState, valves) -> Resear
             "suggested_phases": suggested_phases
         })
         
+        # Unified telemetry using telemetry_sink for consistency
+        telemetry_sink(state, "global_completeness", {
+            "completeness": completeness,
+            "sufficient": sufficient,
+            "missing_dims_count": len(missing_dimensions),
+            "phases_generated": len(suggested_phases),
+            "missing_dimensions": missing_dimensions[:5],  # First 5 to avoid large payload
+            "suggested_phases_count": len(suggested_phases)
+        }, usage=None)  # Add usage metadata if available in global_verdict
+        
         if sufficient:
             return {
                 **state,
@@ -1218,6 +1228,15 @@ async def generate_phases_node(state: ResearchState, valves, planner) -> Researc
             "missing_dimensions": state.get("missing_dimensions", []),
             "new_phases": new_phases
         })
+        
+        # Unified telemetry using telemetry_sink for consistency
+        telemetry_sink(state, "phases_generated", {
+            "phases_added": len(new_phases),
+            "total_phases": total_phases,
+            "missing_dims_count": len(state.get("missing_dimensions", [])),
+            "new_phases_count": len(new_phases),
+            "phase_types": [p.get("phase_type", "unknown") for p in new_phases[:3]]  # First 3 phase types
+        }, usage=None)
         
         # Validate state mutation
         new_state = {

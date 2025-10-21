@@ -700,16 +700,22 @@ async def context_detection_node(state: ResearchState, pipe_instance) -> Researc
     logger.info(f"[CONTEXT_DETECTION][{correlation_id}] Detectando contexto para: '{query}'")
     
     try:
-        # Simular detecção de contexto (em produção, chamaria _detect_unified_context)
-        detected_context = {
-            'setor_principal': 'geral',
-            'tipo_pesquisa': 'geral', 
-            'perfil_sugerido': 'company_profile',
-            'key_questions': [],
-            'research_objectives': [],
-            'detecção_confianca': 0.8,
-            'fonte_deteccao': 'langgraph'
-        }
+        # Se temos uma instância do pipe, usar o método real de detecção
+        if pipe_instance and hasattr(pipe_instance, '_detect_unified_context'):
+            # Simular body para o método existente
+            body = {"messages": [{"content": query}]}
+            detected_context = await pipe_instance._detect_unified_context(query, body)
+        else:
+            # Fallback: usar detecção simplificada
+            detected_context = {
+                'setor_principal': 'geral',
+                'tipo_pesquisa': 'geral', 
+                'perfil_sugerido': 'company_profile',
+                'key_questions': [],
+                'research_objectives': [],
+                'detecção_confianca': 0.8,
+                'fonte_deteccao': 'langgraph_fallback'
+            }
         
         # Adicionar contexto ao state
         state['detected_context'] = detected_context
@@ -6865,7 +6871,7 @@ def should_continue_research(state: ResearchState) -> str:
 # 3. GRAPH BUILDER
 # ============================================================================
 
-def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
+def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None, pipe_instance=None):
     """
     Grafo multi-agente com roteamento dinÃ¢mico
     
@@ -6883,7 +6889,7 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     builder = StateGraph(ResearchState)
     
     # ===== ADICIONAR AGENTES =====
-    builder.add_node("context_detection", lambda s: context_detection_node(s, None))  # TODO: Pass pipe instance
+    builder.add_node("context_detection", lambda s: context_detection_node(s, pipe_instance))
     builder.add_node("coordinator", coordinator_node)
     builder.add_node("planner", lambda s: planner_node(s, valves))
     builder.add_node("researcher", lambda s: researcher_node(s, discovery_tool, scraper_tool))
@@ -8415,7 +8421,7 @@ class Pipe:
                     use_langgraph = False
                 else:
                     # Build Multi-Agent LangGraph workflow
-                    graph = build_multi_agent_graph(self.valves, self.discovery_tool, self.scraper_tool, self.context_reducer_tool)
+                    graph = build_multi_agent_graph(self.valves, self.discovery_tool, self.scraper_tool, self.context_reducer_tool, self)
                 if not graph:
                     yield f"**[MULTI-AGENT]** Graph build failed, falling back to imperative mode\n"
                     use_langgraph = False

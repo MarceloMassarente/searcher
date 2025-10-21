@@ -7215,12 +7215,11 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     # ===== COMPILAR COM CHECKPOINTER =====
     memory = MemorySaver()
     
-    # ✅ FIX: Configurar recursion_limit maior para permitir clarificações
-    config = {"recursion_limit": 50}  # Aumentado: 25 → 50 (default → 2x)
-    
+    # ✅ FIX: Remover config do compile() (não suportado em versões antigas do LangGraph)
+    # recursion_limit deve ser passado no runtime config do ainvoke/astream, não no compile
     try:
         logger.info("[LangGraph] Compiling graph...")
-        graph = builder.compile(checkpointer=memory, config=config)
+        graph = builder.compile(checkpointer=memory)
         logger.info("[LangGraph] Graph compiled successfully")
         return graph
     except Exception as e:

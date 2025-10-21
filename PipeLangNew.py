@@ -1140,6 +1140,21 @@ async def global_completeness_check_node(state: ResearchState, valves) -> Resear
             f"[GLOBAL_CHECK][{correlation_id}] Completeness: {completeness:.2f}, Sufficient: {sufficient}"
         )
         
+        # Emit completeness telemetry
+        missing_dimensions = global_verdict.get("missing_dimensions", [])
+        suggested_phases = global_verdict.get("suggested_phases", [])
+        
+        await _safe_emit(em, {
+            "event": "global_completeness",
+            "correlation_id": correlation_id,
+            "completeness": completeness,
+            "sufficient": sufficient,
+            "missing_dims_count": len(missing_dimensions),
+            "phases_generated": len(suggested_phases),
+            "missing_dimensions": missing_dimensions,
+            "suggested_phases": suggested_phases
+        })
+        
         if sufficient:
             return {
                 **state,
@@ -1193,7 +1208,19 @@ async def generate_phases_node(state: ResearchState, valves, planner) -> Researc
             f"[GENERATE_PHASES][{correlation_id}] Added {len(new_phases)} phases. Total: {total_phases}"
         )
         
-        return {
+        # Emit phase generation telemetry
+        em = state.get("__event_emitter__")
+        await _safe_emit(em, {
+            "event": "phases_generated",
+            "correlation_id": correlation_id,
+            "phases_added": len(new_phases),
+            "total_phases": total_phases,
+            "missing_dimensions": state.get("missing_dimensions", []),
+            "new_phases": new_phases
+        })
+        
+        # Validate state mutation
+        new_state = {
             **state,
             "contract": current_contract,
             "total_phases": total_phases,
@@ -1201,6 +1228,21 @@ async def generate_phases_node(state: ResearchState, valves, planner) -> Researc
             "loop_count": 0,
             "needs_additional_phases": False,
         }
+        
+        # Validate required fields after state mutation
+        required_fields = ["contract", "total_phases", "phase_idx"]
+        missing = [f for f in required_fields if f not in new_state]
+        
+        if missing:
+            logger.error(f"[GENERATE_PHASES][{correlation_id}] State mutation incomplete: {missing}")
+            # Recovery: don't add phases, force done
+            return {
+                **state,
+                "verdict": "done", 
+                "needs_additional_phases": False
+            }
+        
+        return new_state
     
     except Exception as e:
         logger.error(f"[GENERATE_PHASES] Error: {e}")

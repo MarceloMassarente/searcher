@@ -8187,7 +8187,44 @@ class Pipe:
         self.planner = None
         self.deduplicator = None
         
+        # Initialize tools for LangGraph workflow
+        self.discovery_tool = None
+        self.scraper_tool = None
+        self.context_reducer_tool = None
+        
         logger.info("[PIPE] Pipe inicializado")
+
+    def _initialize_tools(self):
+        """Initialize tools for LangGraph workflow"""
+        if self.discovery_tool is None:
+            try:
+                # Import and initialize discovery tool
+                from tool_discovery import discovery_tool
+                self.discovery_tool = discovery_tool
+                logger.info("[PIPE] Discovery tool initialized")
+            except ImportError as e:
+                logger.warning(f"[PIPE] Discovery tool not available: {e}")
+                self.discovery_tool = None
+        
+        if self.scraper_tool is None:
+            try:
+                # Import and initialize scraper tool
+                from tool_content_scraperv5_production_grade_clean import scraper_tool
+                self.scraper_tool = scraper_tool
+                logger.info("[PIPE] Scraper tool initialized")
+            except ImportError as e:
+                logger.warning(f"[PIPE] Scraper tool not available: {e}")
+                self.scraper_tool = None
+        
+        if self.context_reducer_tool is None:
+            try:
+                # Import and initialize context reducer tool
+                from tool_reduce_context_from_scraper_fixed import context_reducer_tool
+                self.context_reducer_tool = context_reducer_tool
+                logger.info("[PIPE] Context reducer tool initialized")
+            except ImportError as e:
+                logger.warning(f"[PIPE] Context reducer tool not available: {e}")
+                self.context_reducer_tool = None
 
     async def health_check(self) -> Dict[str, Any]:
         """Health check bÃ¡sico do pipeline."""
@@ -8289,8 +8326,16 @@ class Pipe:
                 yield f"**[MULTI-AGENT]** Using Multi-Agent LangGraph workflow\n"
                 yield f"**[MULTI-AGENT]** Correlation ID: {correlation_id}\n"
                 
-                # Build Multi-Agent LangGraph workflow
-                graph = build_multi_agent_graph(self.valves, self.discovery_tool, self.scraper_tool, self.context_reducer_tool)
+                # Initialize tools for LangGraph workflow
+                self._initialize_tools()
+                
+                # Check if tools are available
+                if not self.discovery_tool or not self.scraper_tool:
+                    yield f"**[MULTI-AGENT]** Error: 'Pipe' object has no attribute 'discovery_tool', falling back to imperative mode\n"
+                    use_langgraph = False
+                else:
+                    # Build Multi-Agent LangGraph workflow
+                    graph = build_multi_agent_graph(self.valves, self.discovery_tool, self.scraper_tool, self.context_reducer_tool)
                 if not graph:
                     yield f"**[MULTI-AGENT]** Graph build failed, falling back to imperative mode\n"
                     use_langgraph = False

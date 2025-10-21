@@ -327,3 +327,4 @@ git push origin main
 - **Tests**: `run_langgraph_tests()` em `PipeLangNew.py`
 - **Architecture**: Multi-Agent LangGraph (7 specialized agents)
 - **Observability**: Centralized telemetry_sink with cost tracking
+

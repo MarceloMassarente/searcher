@@ -43,3 +43,4 @@
 - [ ] Ou: Reverter para v3.0.0-multi-agent
 - [ ] Notificar usuários
 - [ ] Investigar root cause
+

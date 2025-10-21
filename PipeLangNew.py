@@ -8503,18 +8503,9 @@ class Pipe:
     def _resolve_tools(self, __tools__: Dict[str, Dict[str, Any]]):
         """Resolve tools using deterministic heuristics (from PipeHaystack)"""
         if not __tools__:
-            logger.warning("[PIPE] No tools available, using mock tools")
-            # Create mock tools for testing
-            def mock_discovery_tool(query, return_dict=True):
-                return {"urls": [f"http://mock-{i}.com" for i in range(5)], "candidates": []}
-            
-            def mock_scraper_tool(url):
-                return {"content": f"Mock content from {url}", "title": f"Mock title from {url}"}
-            
-            def mock_context_reducer_tool(**kwargs):
-                return {"final_markdown": "Mock context reduction result"}
-            
-            return mock_discovery_tool, mock_scraper_tool, mock_context_reducer_tool
+            raise RuntimeError(
+                "No tools available. Please configure tools in OpenWebUI."
+            )
 
         keys = list(__tools__.keys())
         logger.debug("Available tools: %s", keys)
@@ -8530,13 +8521,11 @@ class Pipe:
             "context_reducer", keys, ["reduce", "context"]
         )
 
-        # Check if we found the required tools
+        # Check if we found the required tools - FAIL if not found
         if not discover_key:
-            logger.warning(f"Discovery tool not found. Available tools: {keys}")
-            discover_key = None
+            raise RuntimeError(f"Discovery tool not found. Available tools: {keys}")
         if not scrape_key:
-            logger.warning(f"Scraper tool not found. Available tools: {keys}")
-            scrape_key = None
+            raise RuntimeError(f"Scraper tool not found. Available tools: {keys}")
 
         logger.debug("Using discovery tool: %s", discover_key)
         logger.debug("Using scraper tool: %s", scrape_key)
@@ -8544,8 +8533,8 @@ class Pipe:
             logger.debug("Using context reducer tool: %s", context_reducer_key)
 
         # Get the callables
-        d_callable = __tools__[discover_key]["callable"] if discover_key else None
-        s_callable = __tools__[scrape_key]["callable"] if scrape_key else None
+        d_callable = __tools__[discover_key]["callable"]
+        s_callable = __tools__[scrape_key]["callable"]
         cr_callable = (
             __tools__[context_reducer_key]["callable"] if context_reducer_key else None
         )
@@ -8677,11 +8666,11 @@ class Pipe:
                 yield f"**[MULTI-AGENT]** Correlation ID: {correlation_id}\n"
                 
                 # Resolve tools using OpenWebUI __tools__ parameter
-                d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
-                
-                # Check if tools are available
-                if not d_callable or not s_callable:
-                    yield f"**[MULTI-AGENT]** Error: Tools not available, falling back to imperative mode\n"
+                try:
+                    d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
+                except RuntimeError as e:
+                    yield f"**[MULTI-AGENT]** Error: {e}\n"
+                    yield f"**[MULTI-AGENT]** Falling back to imperative mode\n"
                     use_langgraph = False
                 else:
                     # Build Multi-Agent LangGraph workflow

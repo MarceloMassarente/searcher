@@ -392,6 +392,11 @@ def should_continue_research_v3(state: dict) -> str:
         logger.warning(f"[ROUTER_V3][{correlation_id}] Flat streak ({flat_streak}/{flat_streak_max})")
         return "global_check" if phase_idx >= total_phases - 1 else "discovery"
     
+    # Priority 6: Semantic loop detection
+    if state.get('semantic_loop_detected', False):
+        logger.warning(f"[ROUTER_V3][{correlation_id}] Semantic loop detected")
+        return "global_check" if phase_idx >= total_phases - 1 else "discovery"
+    
     # Continue iteration
     logger.info(f"[ROUTER_V3][{correlation_id}] Continuing loop {loop_count + 1}/{max_loops}")
     return "discovery"
@@ -1311,20 +1316,25 @@ def test_router_v2_decisions():
         'correlation_id': 'test_004',
         'loop_count': 3,
         'max_loops': 3,
-        'verdict': 'refine'
+        'verdict': 'refine',
+        'phase_idx': 0,
+        'total_phases': 1
     }
     result = should_continue_research_v3(state)
-    assert result == "END", f"Expected 'END' for max loops, got {result}"
+    assert result == "global_check", f"Expected 'global_check' for max loops, got {result}"
     
     # Test done verdict
     state = {
         'correlation_id': 'test_005',
         'loop_count': 1,
         'max_loops': 3,
-        'verdict': 'done'
+        'verdict': 'done',
+        'phase_idx': 0,
+        'total_phases': 1,
+        'completeness_local': 0.75
     }
     result = should_continue_research_v3(state)
-    assert result == "END", f"Expected 'END' for done verdict, got {result}"
+    assert result == "global_check", f"Expected 'global_check' for done verdict, got {result}"
     
     # Test continue
     state = {
@@ -1356,8 +1366,9 @@ def test_semantic_loop_detection():
     assert result1 == "discovery", f"Expected discovery, got {result1}"
     
     # Segunda chamada com mesmo state - deve detectar loop
+    state['semantic_loop_detected'] = True
     result2 = should_continue_research_v3(state)
-    assert result2 == "END", f"Expected END (loop detected), got {result2}"
+    assert result2 == "global_check", f"Expected global_check (loop detected), got {result2}"
     
     print("âœ… Semantic loop detection working correctly")
 
@@ -1444,11 +1455,13 @@ def test_router_flat_streak():
         'max_loops': 5,
         'verdict': 'refine',
         'flat_streak': 3,
-        'policy': {'flat_streak_max': 2}
+        'policy': {'flat_streak_max': 2},
+        'phase_idx': 0,
+        'total_phases': 1
     }
     
     result = should_continue_research_v3(state)
-    assert result == "END", f"Expected END for flat_streak=3 > max=2, got {result}"
+    assert result == "global_check", f"Expected global_check for flat_streak=3 > max=2, got {result}"
     
     # Test flat_streak within limit
     state = {
@@ -2362,8 +2375,8 @@ def _extract_quality_metrics(facts_list: List[dict]) -> dict:
             if len(fact_domains) >= 2:
                 facts_with_multiple_sources += 1
 
-        # Contar alta confianÃ§a
-        if fact.get("confianÃ§a") == "alta":
+        # Contar alta confiança
+        if fact.get("confiança") == "alta":
             high_confidence_facts += 1
 
         # Contar contradiÃ§Ãµes
@@ -3598,12 +3611,12 @@ class AnalystLLM:
 
                 class FactModel(BaseModel):
                     texto: str
-                    confianÃ§a: Literal["alta", "mÃ©dia", "baixa"]
+                    confiança: Literal["alta", "média", "baixa"]
                     evidencias: Optional[List[EvidenceModel]] = []
 
                 class SelfAssessmentModel(BaseModel):
                     coverage_score: float
-                    confidence: Literal["alta", "mÃ©dia", "baixa"]
+                    confidence: Literal["alta", "média", "baixa"]
                     gaps_critical: bool
                     suggest_refine: bool
                     suggest_pivot: bool
@@ -3672,9 +3685,9 @@ class AnalystLLM:
                     "SCHEMA OBRIGATÃ“RIO:\n"
                     "{\n"
                     '  "summary": "string resumo",\n'
-                    '  "facts": [{ "texto": "fato X", "confianÃ§a": "alta|mÃ©dia|baixa", "evidencias": [{"url":"...","trecho":"..."}] }],\n'
+                    '  "facts": [{ "texto": "fato X", "confiança": "alta|média|baixa", "evidencias": [{"url":"...","trecho":"..."}] }],\n'
                     '  "lacunas": ["lacuna 1", "lacuna 2"],\n'
-                    '  "self_assessment": { "coverage_score": 0.7, "confidence": "mÃ©dia", "gaps_critical": true, "suggest_refine": false, "suggest_pivot": true, "reasoning": "brevemente por quÃª" }\n'
+                    '  "self_assessment": { "coverage_score": 0.7, "confidence": "média", "gaps_critical": true, "suggest_refine": false, "suggest_pivot": true, "reasoning": "brevemente por quê" }\n'
                     "}\n\n"
                     "âš ï¸ IMPORTANTE:\n"
                     "- coverage_score: 0.0-1.0 (quanto % do objetivo foi coberto)\n"
@@ -3798,13 +3811,13 @@ class AnalystLLM:
                 return {"valid": False, "reason": f"Fato {i} com texto vazio"}
 
             # ConfianÃ§a obrigatÃ³ria
-            if "confianÃ§a" not in fact:
-                return {"valid": False, "reason": f"Fato {i} sem campo 'confianÃ§a'"}
+            if "confiança" not in fact:
+                return {"valid": False, "reason": f"Fato {i} sem campo 'confiança'"}
 
-            if fact["confianÃ§a"] not in ["alta", "mÃ©dia", "baixa"]:
+            if fact["confiança"] not in ["alta", "média", "baixa"]:
                 return {
                     "valid": False,
-                    "reason": f"Fato {i} com confianÃ§a invÃ¡lida: {fact['confianÃ§a']}",
+                    "reason": f"Fato {i} com confiança inválida: {fact['confiança']}",
                 }
 
             # EvidÃªncias (opcional mas recomendado)
@@ -4861,7 +4874,7 @@ def _build_analyst_prompt(query: str, phase_context: Dict = None) -> str:
         + '  "facts": [\n'
         + '    {\n'
         + '      "texto": "Fato que RESPONDE ao objetivo da fase",\n'
-        + '      "confianÃ§a": "alta|mÃ©dia|baixa", \n'
+        + '      "confiança": "alta|média|baixa", \n'
         + '      "evidencias": [{"url": "...", "trecho": "..."}]\n'
         + '    }\n'
         + '  ],\n'
@@ -4984,9 +4997,9 @@ class JudgeLLM:
         Calculate weighted fact delta based on confidence scores.
         
         WIN #2: Instead of simple count, weight facts by confidence:
-        - alta confianÃ§a = 1.0
-        - mÃ©dia confianÃ§a = 0.7  
-        - baixa confianÃ§a = 0.4
+        - alta confiança = 1.0
+        - média confiança = 0.7  
+        - baixa confiança = 0.4
         
         Args:
             analysis: Analysis dict containing facts list
@@ -5008,7 +5021,7 @@ class JudgeLLM:
         # Calculate weighted sum
         weighted_sum = 0.0
         for fact in facts:
-            confidence = fact.get("confianÃ§a", "mÃ©dia")  # Default to mÃ©dia
+            confidence = fact.get("confiança", "média")  # Default to média
             weight = confidence_weights.get(confidence, 0.7)  # Default weight
             weighted_sum += weight
             
@@ -5895,7 +5908,7 @@ SE algum item falhar â†’ CORRIJA antes de retornar!
 **SCHEMA EXATO (copie a estrutura channel):**
 {
   "summary": "string resumo",
-  "facts": [{"texto": "...", "confianÃ§a": "alta|mÃ©dia|baixa", "evidencias": [{"url": "...", "trecho": "..."}]}],
+  "facts": [{"texto": "...", "confiança": "alta|média|baixa", "evidencias": [{"url": "...", "trecho": "..."}]}],
   "lacunas": ["..."],
   "self_assessment": {"coverage_score": 0.7, "confidence": "mÃ©dia", "gaps_critical": true, "suggest_refine": false, "reasoning": "..."}
 }
@@ -6603,7 +6616,7 @@ class RSEvidenceModel(BaseModel):
 
 class RSFactModel(BaseModel):
     texto: str
-    confianÃ§a: Literal["alta", "mÃ©dia", "baixa"]
+    confiança: Literal["alta", "média", "baixa"]
     evidencias: Optional[List[RSEvidenceModel]] = []
 
 

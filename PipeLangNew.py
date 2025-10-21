@@ -267,6 +267,9 @@ def telemetry_sink(state: dict, event: str, data: dict, usage: dict = None) -> N
         completion_tokens = usage.get('completion_tokens', 0)
         estimated_cost = (prompt_tokens * 2.50 / 1_000_000) + (completion_tokens * 10.0 / 1_000_000)
     
+    # ✅ ESTRUTURADO: Log com correlation_id sempre
+    logger.info(f"[TELEMETRY][{correlation_id}] {event}: {data}")
+    
     # Structured telemetry event
     telemetry_event = {
         "timestamp": datetime.now().isoformat(),
@@ -572,6 +575,46 @@ def telemetry_sink_node(state: dict) -> dict:
     })
     
     return state
+
+def check_circuit_breaker(state: dict, valves) -> bool:
+    """Check if circuit breaker should be activated based on failure rate"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    phase_results = state.get('phase_results', [])
+    
+    if len(phase_results) < getattr(valves, 'CIRCUIT_BREAKER_MIN_PHASES', 2):
+        return False  # Not enough phases to evaluate
+    
+    # Count failed phases
+    failed_phases = sum(1 for phase in phase_results if phase.get('failed_query', False))
+    failure_rate = failed_phases / len(phase_results)
+    threshold = getattr(valves, 'CIRCUIT_BREAKER_FAILURE_THRESHOLD', 0.5)
+    
+    if failure_rate >= threshold:
+        logger.critical(f"[CIRCUIT_BREAKER][{correlation_id}] ACTIVATED: {failed_phases}/{len(phase_results)} phases failed ({failure_rate:.1%} >= {threshold:.1%})")
+        telemetry_sink(state, "circuit_breaker_activated", {
+            "failed_phases": failed_phases,
+            "total_phases": len(phase_results),
+            "failure_rate": failure_rate,
+            "threshold": threshold
+        })
+        return True
+    
+    return False
+
+def adaptive_timeout(context_size: int, base_timeout: int, valves) -> int:
+    """Calculate adaptive timeout based on context size"""
+    if not getattr(valves, 'ADAPTIVE_TIMEOUT_ENABLED', True):
+        return base_timeout
+    
+    # Scale timeout based on context size
+    if context_size > 100_000:  # >100k chars
+        return min(base_timeout * 3, 1800)  # Up to 30min
+    elif context_size > 50_000:  # >50k chars
+        return min(base_timeout * 2, 1200)  # Up to 20min
+    elif context_size > 20_000:  # >20k chars
+        return min(base_timeout * 1.5, 900)  # Up to 15min
+    else:
+        return base_timeout
 
 # ============ END GUARD NODES ============
 
@@ -8057,6 +8100,35 @@ class Pipe:
             le=100000,
             description="Máximo de domínios únicos mantidos em memória global"
         )
+        
+        # ===== CIRCUIT BREAKER & HEALTH CHECKS =====
+        CIRCUIT_BREAKER_FAILURE_THRESHOLD: float = Field(
+            default=0.5,
+            ge=0.1,
+            le=0.9,
+            description="Threshold de falhas para ativar circuit breaker (50% das fases falharam)"
+        )
+        CIRCUIT_BREAKER_MIN_PHASES: int = Field(
+            default=2,
+            ge=1,
+            le=10,
+            description="Número mínimo de fases antes de ativar circuit breaker"
+        )
+        HEALTH_CHECK_TIMEOUT: int = Field(
+            default=30,
+            ge=5,
+            le=120,
+            description="Timeout para health check de tools/LLM (segundos)"
+        )
+        ADAPTIVE_TIMEOUT_ENABLED: bool = Field(
+            default=True,
+            description="Se True, ajusta timeouts dinamicamente baseado no tamanho do contexto"
+        )
+        FALLBACK_MODEL: str = Field(
+            default="gpt-3.5-turbo",
+            description="Modelo de fallback quando GPT-4 timeout (mais barato e rápido)"
+        )
+        
         ENABLE_GLOBAL_COMPLETENESS_CHECK: bool = Field(
             default=True,
             description="Enable global completeness evaluation (Deerflow-style)"

@@ -793,13 +793,18 @@ def coordinator_node(state: ResearchState) -> ResearchState:
         except Exception:
             pass
         if attempts >= max_attempts:
-            # Força saída do ciclo de clarificação
+            # ✅ HARD CAP: Força saída do ciclo de clarificação
+            logger.warning(f"[COORDINATOR][{correlation_id}] Max clarification attempts reached ({attempts}/{max_attempts}) - forcing researcher")
             return {
                 **state,
                 "goto": "researcher",
                 "needs_clarification": False,
-                "_clarification_attempts": attempts
+                "_clarification_attempts": attempts,
+                "messages": [f"⚠️ Limite de {max_attempts} tentativas atingido. Continuando com a query atual..."]
             }
+        
+        # Query vaga detectada (mas dentro do limite)
+        logger.info(f"[COORDINATOR][{correlation_id}] Query vaga detectada: '{query}' (tentativa {attempts + 1}/{max_attempts})")
         return {
             **state,
             "goto": "coordinator",
@@ -7131,7 +7136,10 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     # ===== COMPILAR COM CHECKPOINTER =====
     memory = MemorySaver()
     
-    return builder.compile(checkpointer=memory)
+    # ✅ FIX: Configurar recursion_limit maior para permitir clarificações
+    config = {"recursion_limit": 50}  # Aumentado: 25 → 50 (default → 2x)
+    
+    return builder.compile(checkpointer=memory, config=config)
 
 def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
     """Legacy: Builds and compiles the research LangGraph workflow with Guard Nodes."""
@@ -8751,7 +8759,10 @@ class Pipe:
                         }
                         
                         # Run Multi-Agent LangGraph workflow with streaming
-                        config = {"configurable": {"thread_id": correlation_id}}
+                        config = {
+                            "configurable": {"thread_id": correlation_id},
+                            "recursion_limit": 50  # ✅ MATCH com o limite do builder
+                        }
                         
                         async for event in graph.astream_events(initial_state, config, version="v1"):
                             event_type = event.get("event")
@@ -8775,6 +8786,13 @@ class Pipe:
                         
             except Exception as e:
                 yield f"**[MULTI-AGENT]** Error: {e}, falling back to imperative mode\n"
+                logger.error(f"[MULTI-AGENT] LangGraph failed: {e}")
+                
+                # ✅ FIX: Se foi erro de tipo ('str' has no attribute 'get'), resetar state
+                if "'str' object has no attribute 'get'" in str(e):
+                    logger.warning("[MULTI-AGENT] State corruption detected - resetting")
+                    # Continuar para modo imperativo com state limpo
+                
                 use_langgraph = False
         
         if not use_langgraph:

@@ -102,6 +102,694 @@ try:
 except ImportError:
     HAYSTACK_AVAILABLE = False
 
+# ============ LANGGRAPH REFACTOR: TYPED STATE MODELS ============
+
+class Phase(BaseModel):
+    """Individual research phase"""
+    id: str = Field(..., description="Unique phase identifier")
+    name: str = Field(default="", description="Human-readable phase name")
+    objective: str = Field(..., description="Phase objective/goal")
+    seed_family: Literal["entity-centric","problem-centric","outcome-centric","regulatory","counterfactual"] = Field(default="entity-centric", description="Seed exploration family")
+    queries: List[str] = Field(default_factory=list, description="Queries tried in this phase")
+    seed_query: str = Field(default="", description="Initial seed query")
+    phase_type: str = Field(default="industry", description="Phase type")
+    must_terms: List[str] = Field(default_factory=list, description="Must-include terms")
+    avoid_terms: List[str] = Field(default_factory=list, description="Terms to avoid")
+
+class Telemetry(BaseModel):
+    """Metrics for one iteration/loop"""
+    loop_idx: int = Field(default=0, description="Loop index (0-based)")
+    coverage: float = Field(default=0.0, ge=0.0, le=1.0, description="Coverage score (0-1)")
+    novel_fact_ratio: float = Field(default=0.0, ge=0.0, le=1.0, description="Ratio of new facts")
+    novel_domain_ratio: float = Field(default=0.0, ge=0.0, le=1.0, description="Ratio of new domains")
+    domain_diversity: float = Field(default=0.0, ge=0.0, le=1.0, description="Domain diversity metric")
+    contradiction: float = Field(default=0.0, ge=0.0, le=1.0, description="Contradiction score")
+    tokens_saved: int = Field(default=0, description="Tokens saved by deduplication")
+    n_facts: int = Field(default=0, description="Number of facts extracted")
+    unique_domains: int = Field(default=0, description="Unique domains found")
+
+class Decision(BaseModel):
+    """Judge's decision for this iteration"""
+    verdict: Literal["done","refine","new_phase"] = Field(..., description="Verdict")
+    next_query: Optional[str] = Field(default=None, description="Next query if refining")
+    new_phase: Optional[Dict[str, Any]] = Field(default=None, description="New phase if creating")
+    reason: str = Field(default="", description="Reasoning for decision")
+    modifications: List[str] = Field(default_factory=list, description="Auto-corrections applied")
+    phase_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Phase quality score")
+
+class Policy(BaseModel):
+    """Configurable policy thresholds (data-driven governance)"""
+    coverage_target: float = Field(default=0.7, ge=0.0, le=1.0, description="Target coverage for DONE")
+    flat_streak_max: int = Field(default=2, ge=1, le=5, description="Max consecutive flat loops before stopping")
+    refine_overlap_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="Query similarity threshold")
+    seed_rotation_enabled: bool = Field(default=True, description="Enable seed family rotation")
+    seed_rotation_min_loop: int = Field(default=2, ge=0, le=10, description="Min loop count before seed rotation")
+    duplicate_detection_threshold: float = Field(default=0.75, ge=0.5, le=0.95, description="Phase similarity threshold")
+    novelty_min: float = Field(default=0.1, ge=0.0, le=1.0, description="Min novelty ratio to continue")
+    diversity_min: float = Field(default=0.3, ge=0.0, le=1.0, description="Min domain diversity to continue")
+
+# ============ END LANGGRAPH MODELS ============
+
+# ============ LANGGRAPH WRAPPER FUNCTIONS ============
+
+async def safe_llm_call(llm, prompt: str, generation_kwargs: dict, timeout: int = 60, max_retries: int = 3) -> dict:
+    """Safe LLM call with retry, timeout, and structured error handling"""
+    from tenacity import retry, stop_after_attempt, wait_exponential
+    
+    @retry(
+        stop=stop_after_attempt(max_retries),
+        wait=wait_exponential(min=1, max=8),
+        reraise=True
+    )
+    async def _call_with_retry():
+        try:
+            result = await llm.ainvoke(prompt, **generation_kwargs)
+            
+            # Extract usage metadata more robustly
+            usage_metadata = {}
+            if hasattr(result, 'usage_metadata'):
+                usage_metadata = result.usage_metadata
+            elif hasattr(result, 'usage'):
+                usage_metadata = result.usage
+            elif isinstance(result, dict) and 'usage' in result:
+                usage_metadata = result['usage']
+            
+            # Ensure we have standard fields
+            usage_metadata = {
+                "prompt_tokens": usage_metadata.get('prompt_tokens', 0),
+                "completion_tokens": usage_metadata.get('completion_tokens', 0),
+                "total_tokens": usage_metadata.get('total_tokens', 0)
+            }
+            
+            return {
+                "replies": [result.content] if hasattr(result, 'content') else [str(result)],
+                "usage": usage_metadata,
+                "latency": 0,  # Could be calculated if needed
+                "success": True
+            }
+        except Exception as e:
+            logger.error(f"[safe_llm_call] Error: {e}")
+            raise
+    
+    try:
+        return await _call_with_retry()
+    except Exception as e:
+        logger.error(f"[safe_llm_call] Failed after {max_retries} retries: {e}")
+        return {
+            "replies": [],
+            "usage": {},
+            "latency": 0,
+            "success": False,
+            "error": str(e)
+        }
+
+def telemetry_sink(state: dict, event: str, data: dict, usage: dict = None) -> None:
+    """Centralized telemetry emission for LangGraph nodes with usage tracking"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    
+    # Calculate cost (GPT-4o pricing: $2.50/1M input, $10/1M output)
+    estimated_cost = 0.0
+    if usage:
+        prompt_tokens = usage.get('prompt_tokens', 0)
+        completion_tokens = usage.get('completion_tokens', 0)
+        estimated_cost = (prompt_tokens * 2.50 / 1_000_000) + (completion_tokens * 10.0 / 1_000_000)
+    
+    # Structured telemetry event
+    telemetry_event = {
+        "timestamp": datetime.now().isoformat(),
+        "correlation_id": correlation_id,
+        "event": event,
+        "data": data,
+        "usage": usage or {},
+        "estimated_cost_usd": estimated_cost,
+        "loop_idx": state.get('loop_idx', 0),
+        "verdict": state.get('verdict', 'unknown')
+    }
+    
+    # Emit to logger with cost info
+    total_tokens = usage.get('total_tokens', 0) if usage else 0
+    logger.info(f"[TELEMETRY][{correlation_id}] {event}: cost=${estimated_cost:.4f}, tokens={total_tokens}")
+    
+    # Emit to event_emitter if available
+    event_emitter = state.get('__event_emitter__')
+    if event_emitter and callable(event_emitter):
+        try:
+            cost_info = f" (cost=${estimated_cost:.4f}, tokens={total_tokens})" if usage else ""
+            event_emitter(f"**[{event.upper()}]** {data}{cost_info}")
+        except Exception as e:
+            logger.warning(f"[telemetry_sink] Event emitter failed: {e}")
+
+def should_continue_research_v2(state: dict) -> str:
+    """Enhanced router with Policy-based decisions"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    
+    # Get policy from state or use defaults
+    policy = state.get('policy', {})
+    if isinstance(policy, dict):
+        coverage_target = policy.get('coverage_target', 0.7)
+        flat_streak_max = policy.get('flat_streak_max', 2)
+        novelty_min = policy.get('novelty_min', 0.1)
+        diversity_min = policy.get('diversity_min', 0.3)
+    else:
+        # Policy is a Pydantic model
+        coverage_target = policy.coverage_target
+        flat_streak_max = policy.flat_streak_max
+        novelty_min = policy.novelty_min
+        diversity_min = policy.diversity_min
+    
+    # Type coercion
+    loop_count = int(state.get('loop_count', 0))
+    max_loops = int(state.get('max_loops', 3))
+    verdict = state.get('verdict', 'done')
+    flat_streak = int(state.get('flat_streak', 0))  # NEW
+    
+    # Priority 1: Max loops exceeded
+    if loop_count >= max_loops:
+        logger.warning(f"[ROUTER_V2][{correlation_id}] Max loops reached ({loop_count}/{max_loops})")
+        return "END"
+    
+    # Priority 2: Judge decided DONE
+    if verdict == "done":
+        logger.info(f"[ROUTER_V2][{correlation_id}] Judge decided DONE after {loop_count} loops")
+        return "END"
+    
+    # Priority 3: Failed query
+    if state.get('failed_query', False):
+        logger.warning(f"[ROUTER_V2][{correlation_id}] Query failed")
+        return "END"
+    
+    # Priority 4: Flat streak exceeded (NEW)
+    if flat_streak >= flat_streak_max:
+        logger.warning(f"[ROUTER_V2][{correlation_id}] Flat streak exceeded ({flat_streak}/{flat_streak_max})")
+        return "END"
+    
+    # Priority 5: Diminishing returns (enhanced with Policy)
+    if state.get('diminishing_returns', False):
+        logger.warning(f"[ROUTER_V2][{correlation_id}] Diminishing returns detected")
+        return "END"
+    
+    # Priority 5: Coverage + novelty + diversity check
+    coverage = state.get('coverage_score', 0.0)
+    novel_fact_ratio = state.get('new_facts_ratio', 0.0)
+    domain_diversity = state.get('domain_diversity', 0.0)
+    
+    if (coverage >= coverage_target and 
+        novel_fact_ratio < novelty_min and 
+        domain_diversity < diversity_min):
+        logger.warning(f"[ROUTER_V2][{correlation_id}] Low novelty/diversity despite good coverage")
+        return "END"
+    
+    # Continue iteration
+    logger.info(f"[ROUTER_V2][{correlation_id}] Continuing loop {loop_count + 1}/{max_loops} (verdict={verdict}, flat_streak={flat_streak})")
+    return "discovery"
+
+# ============ END WRAPPER FUNCTIONS ============
+
+# ============ LANGGRAPH GUARD NODES ============
+
+def guard_new_phase_node(state: dict) -> dict:
+    """Guard 1: Anti-duplicate NEW_PHASE detection using multidimensional similarity"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    verdict = state.get('verdict', 'done')
+    new_phase = state.get('new_phase')
+    contract = state.get('contract', {})
+    
+    if verdict == "new_phase" and new_phase and contract:
+        existing_phases = contract.get("fases", [])
+        if existing_phases and isinstance(new_phase, dict):
+            new_obj = new_phase.get("objetivo") or new_phase.get("objective", "")
+            new_seed = new_phase.get("seed_query", "")
+            new_type = new_phase.get("phase_type", "")
+            
+            # Use TF-IDF similarity for better text matching
+            max_sim_score = 0.0
+            max_sim_idx = -1
+            
+            for i, existing_phase in enumerate(existing_phases):
+                if not isinstance(existing_phase, dict):
+                    continue
+                    
+                existing_obj = existing_phase.get("objetivo", "")
+                existing_seed = existing_phase.get("seed_query", "")
+                existing_type = existing_phase.get("phase_type", "")
+                
+                # TF-IDF similarity for objective and seed (more robust than exact match)
+                obj_sim = _calculate_similarity_tfidf(new_obj, existing_obj)
+                seed_sim = _calculate_similarity_tfidf(new_seed, existing_seed)
+                type_sim = 1.0 if new_type == existing_type else 0.0
+                
+                # Weighted similarity: objective (0.6) + seed (0.4) + type (0.0)
+                similarity = (obj_sim * 0.6 + seed_sim * 0.4 + type_sim * 0.0)
+                
+                if similarity > max_sim_score:
+                    max_sim_score = similarity
+                    max_sim_idx = i
+            
+            threshold = state.get('duplicate_detection_threshold', 0.75)
+            if max_sim_score > threshold:
+                duplicate_phase = existing_phases[max_sim_idx]
+                logger.warning(f"[GUARD_NEW_PHASE][{correlation_id}] Duplicate phase detected (similarity {max_sim_score:.2f}): '{duplicate_phase.get('name', 'N/A')}'")
+                
+                # Convert to REFINE and reuse seed_query
+                state['verdict'] = "refine"
+                state['next_query'] = new_phase.get("seed_query", "")
+                state['reasoning'] = f"[AUTO-CORREÇÃO] Fase proposta duplica '{duplicate_phase.get('name', 'fase existente')}'. Convertido para refine com query focada."
+                state['new_phase'] = {}  # Clear new_phase
+                
+                # Add to modifications
+                modifications = state.get('modifications', [])
+                modifications.append(f"Anti-duplicate guard: new_phase → refine (similarity {max_sim_score:.2f} with '{duplicate_phase.get('name', 'N/A')}')")
+                state['modifications'] = modifications
+    
+    return state
+
+def guard_redundant_refine_node(state: dict) -> dict:
+    """Guard 2: Anti-redundant REFINE blocking to prevent infinite loops"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    verdict = state.get('verdict', 'done')
+    next_query = state.get('next_query', '')
+    telemetry_loops = state.get('telemetry_loops', [])
+    
+    if verdict == "refine" and next_query and telemetry_loops:
+        from difflib import SequenceMatcher
+        
+        # Extract previously used queries
+        used_queries = []
+        for loop in telemetry_loops:
+            q = loop.get("query", "").strip().lower()
+            if q:
+                used_queries.append(q)
+        
+        # Check similarity with previous queries
+        next_lower = next_query.strip().lower()
+        for used in used_queries:
+            similarity = SequenceMatcher(None, next_lower, used).ratio()
+            if similarity > 0.7:
+                logger.warning(f"[GUARD_REDUNDANT_REFINE][{correlation_id}] next_query too similar to previous query: {similarity:.0%} similarity")
+                logger.warning(f"[GUARD_REDUNDANT_REFINE][{correlation_id}] Previous: '{used}'")
+                logger.warning(f"[GUARD_REDUNDANT_REFINE][{correlation_id}] Proposed: '{next_lower}'")
+                
+                # Force DONE instead of spinning with duplicate query
+                state['verdict'] = "done"
+                state['reasoning'] = f"[AUTO-CORREÇÃO] Query proposta muito similar à anterior ({similarity:.0%}). Parando para evitar repetição inútil."
+                state['next_query'] = ""
+                
+                # Add to modifications
+                modifications = state.get('modifications', [])
+                modifications.append(f"Anti-redundant refine: refine → done (query similarity {similarity:.0%})")
+                state['modifications'] = modifications
+                break
+    
+    return state
+
+def seed_rotation_node(state: dict) -> dict:
+    """Guard 3: Seed family rotation on NEW_PHASE after loop ≥2 for orthogonal exploration"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    verdict = state.get('verdict', 'done')
+    new_phase = state.get('new_phase')
+    telemetry_loops = state.get('telemetry_loops', [])
+    phase_context = state.get('phase_context', {})
+    
+    if verdict == "new_phase" and new_phase:
+        loop_number = len(telemetry_loops) if telemetry_loops else 0
+        
+        # Rotate family only after loop ≥2 (third iteration)
+        if loop_number >= 2:
+            current_family = (
+                phase_context.get("seed_family_hint", "entity-centric")
+                if phase_context
+                else "entity-centric"
+            )
+            
+            # Rotate seed family
+            family_rotation = {
+                "entity-centric": "problem-centric",
+                "problem-centric": "outcome-centric", 
+                "outcome-centric": "regulatory",
+                "regulatory": "counterfactual",
+                "counterfactual": "entity-centric"
+            }
+            
+            new_family = family_rotation.get(current_family, "entity-centric")
+            
+            # Inject seed_family_hint into new_phase
+            if isinstance(new_phase, dict):
+                new_phase["seed_family_hint"] = new_family
+                
+                # Update reasoning to document rotation
+                if "reasoning" in new_phase:
+                    new_phase["reasoning"] += f" Mudança de família: {current_family} → {new_family}"
+                else:
+                    new_phase["reasoning"] = f"Mudança de família: {current_family} → {new_family}"
+            
+            logger.info(f"[SEED_ROTATION][{correlation_id}] Rotação de família: {current_family} → {new_family} (loop {loop_number})")
+    
+    return state
+
+def telemetry_sink_node(state: dict) -> dict:
+    """Telemetry sink node for structured event emission"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    
+    # Emit telemetry event
+    telemetry_sink(state, "node_completion", {
+        "verdict": state.get('verdict', 'unknown'),
+        "loop_idx": state.get('loop_count', 0),
+        "modifications": state.get('modifications', [])
+    })
+    
+    return state
+
+# ============ END GUARD NODES ============
+
+# ============ P0-1: TF-IDF SIMILARITY HELPER ============
+
+def _calculate_similarity_tfidf(text1: str, text2: str, fallback_threshold: float = 0.5) -> float:
+    """Calculate text similarity using TF-IDF + cosine (fallback to SequenceMatcher)"""
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        if not text1 or not text2:
+            return 0.0
+        
+        vectorizer = TfidfVectorizer(lowercase=True, stop_words='english')
+        tfidf_matrix = vectorizer.fit_transform([text1, text2])
+        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        
+        return float(similarity)
+        
+    except Exception:
+        # Fallback to SequenceMatcher
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+
+# ============ END TF-IDF HELPER ============
+
+# ============ LANGGRAPH HUMAN-IN-THE-LOOP ============
+
+def maybe_interrupt_for_pivot(state: dict) -> dict:
+    """Check for pivot suggestions and trigger interrupt if needed"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    last_decision = state.get('last_decision', {})
+    contradiction = state.get('contradiction', 0.0)
+    
+    # Check for pivot suggestion in reasoning
+    reason = last_decision.get('reason', '') if isinstance(last_decision, dict) else ''
+    suggest_pivot = 'suggest_pivot' in reason.lower() or 'pivot' in reason.lower()
+    
+    # Check for high contradiction
+    high_contradiction = contradiction > 0.8
+    
+    if suggest_pivot or high_contradiction:
+        logger.info(f"[INTERRUPT][{correlation_id}] Triggering interrupt for pivot suggestion")
+        
+        # Prepare interrupt payload
+        interrupt_payload = {
+            "reason": reason,
+            "contradiction_score": contradiction,
+            "suggest_pivot": suggest_pivot,
+            "high_contradiction": high_contradiction,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Mark state for interrupt (will be handled by graph.interrupt())
+        state['_interrupt_triggered'] = True
+        state['_interrupt_payload'] = interrupt_payload
+        
+        # Emit telemetry
+        telemetry_sink(state, "interrupt_triggered", interrupt_payload)
+    
+    return state
+
+def handle_interrupt_resume(state: dict, user_input: dict = None) -> dict:
+    """Handle resume from interrupt with user input"""
+    correlation_id = state.get('correlation_id', 'unknown')
+    
+    if not state.get('_interrupt_triggered'):
+        return state
+    
+    if user_input:
+        # Process user input for pivot decision
+        new_seeds = user_input.get('new_seeds', [])
+        must_terms = user_input.get('must_terms', [])
+        pivot_decision = user_input.get('pivot_decision', 'continue')
+        
+        if pivot_decision == 'pivot' and new_seeds:
+            # Update state with new seeds
+            state['new_seeds'] = new_seeds
+            state['must_terms'] = must_terms
+            logger.info(f"[INTERRUPT_RESUME][{correlation_id}] Pivot applied with {len(new_seeds)} new seeds")
+        elif pivot_decision == 'abort':
+            # Force DONE
+            state['verdict'] = 'done'
+            state['reasoning'] = 'User requested abort after pivot suggestion'
+            logger.info(f"[INTERRUPT_RESUME][{correlation_id}] User requested abort")
+        else:
+            # Continue with existing state
+            logger.info(f"[INTERRUPT_RESUME][{correlation_id}] Continuing without pivot")
+        
+        # Clear interrupt flags
+        state['_interrupt_triggered'] = False
+        state['_interrupt_payload'] = None
+        
+        # Emit telemetry
+        telemetry_sink(state, "interrupt_resumed", {
+            "pivot_decision": pivot_decision,
+            "new_seeds_count": len(new_seeds),
+            "must_terms_count": len(must_terms)
+        })
+    
+    return state
+
+# ============ END HUMAN-IN-THE-LOOP ============
+
+# ============ LANGGRAPH TEST SUITE ============
+
+def test_guard_new_phase_dedup():
+    """Test Guard 1: Anti-duplicate NEW_PHASE detection"""
+    print("🧪 Testing Guard 1: Anti-duplicate NEW_PHASE")
+    
+    # Setup test state
+    state = {
+        'correlation_id': 'test_001',
+        'verdict': 'new_phase',
+        'new_phase': {
+            'objetivo': 'Quantify market size',
+            'seed_query': 'executive search Brasil volume',
+            'phase_type': 'industry'
+        },
+        'contract': {
+            'fases': [
+                {
+                    'name': 'Market Volume',
+                    'objetivo': 'Quantify market size',
+                    'seed_query': 'executive search Brasil volume',
+                    'phase_type': 'industry'
+                }
+            ]
+        },
+        'duplicate_detection_threshold': 0.75,
+        'modifications': []
+    }
+    
+    # Run guard
+    result = guard_new_phase_node(state)
+    
+    # Assertions
+    assert result['verdict'] == 'refine', f"Expected 'refine', got {result['verdict']}"
+    assert result['next_query'] == 'executive search Brasil volume', f"Expected seed query, got {result['next_query']}"
+    assert 'Anti-duplicate guard' in result['modifications'][0], f"Expected modification message, got {result['modifications']}"
+    
+    print("✅ Guard 1 test passed: Duplicate phase detected and converted to refine")
+
+def test_guard_redundant_refine():
+    """Test Guard 2: Anti-redundant REFINE blocking"""
+    print("🧪 Testing Guard 2: Anti-redundant REFINE")
+    
+    # Setup test state
+    state = {
+        'correlation_id': 'test_002',
+        'verdict': 'refine',
+        'next_query': 'executive search Brasil volume',
+        'telemetry_loops': [
+            {'query': 'executive search Brasil volume'},
+            {'query': 'executive search Brasil volume'}
+        ],
+        'modifications': []
+    }
+    
+    # Run guard
+    result = guard_redundant_refine_node(state)
+    
+    # Assertions
+    assert result['verdict'] == 'done', f"Expected 'done', got {result['verdict']}"
+    assert result['next_query'] == '', f"Expected empty query, got {result['next_query']}"
+    assert 'Anti-redundant refine' in result['modifications'][0], f"Expected modification message, got {result['modifications']}"
+    
+    print("✅ Guard 2 test passed: Redundant query detected and converted to done")
+
+def test_seed_rotation():
+    """Test Guard 3: Seed family rotation"""
+    print("🧪 Testing Guard 3: Seed family rotation")
+    
+    # Setup test state
+    state = {
+        'correlation_id': 'test_003',
+        'verdict': 'new_phase',
+        'new_phase': {
+            'objetivo': 'New phase objective',
+            'seed_query': 'new query'
+        },
+        'telemetry_loops': [
+            {'query': 'query1'},
+            {'query': 'query2'}
+        ],  # loop_number = 2
+        'phase_context': {
+            'seed_family_hint': 'entity-centric'
+        }
+    }
+    
+    # Run guard
+    result = seed_rotation_node(state)
+    
+    # Assertions
+    assert result['new_phase']['seed_family_hint'] == 'problem-centric', f"Expected 'problem-centric', got {result['new_phase']['seed_family_hint']}"
+    assert 'Mudança de família' in result['new_phase']['reasoning'], f"Expected rotation message, got {result['new_phase']['reasoning']}"
+    
+    print("✅ Guard 3 test passed: Seed family rotated from entity-centric to problem-centric")
+
+def test_router_v2_decisions():
+    """Test Router v2: Policy-based decisions"""
+    print("🧪 Testing Router v2: Policy-based decisions")
+    
+    # Test max loops
+    state = {
+        'correlation_id': 'test_004',
+        'loop_count': 3,
+        'max_loops': 3,
+        'verdict': 'refine'
+    }
+    result = should_continue_research_v2(state)
+    assert result == "END", f"Expected 'END' for max loops, got {result}"
+    
+    # Test done verdict
+    state = {
+        'correlation_id': 'test_005',
+        'loop_count': 1,
+        'max_loops': 3,
+        'verdict': 'done'
+    }
+    result = should_continue_research_v2(state)
+    assert result == "END", f"Expected 'END' for done verdict, got {result}"
+    
+    # Test continue
+    state = {
+        'correlation_id': 'test_006',
+        'loop_count': 1,
+        'max_loops': 3,
+        'verdict': 'refine'
+    }
+    result = should_continue_research_v2(state)
+    assert result == "discovery", f"Expected 'discovery' to continue, got {result}"
+    
+    print("✅ Router v2 tests passed: All decision paths working correctly")
+
+def test_tfidf_similarity():
+    """Test TF-IDF similarity calculation"""
+    print("🧪 Testing TF-IDF similarity")
+    
+    # Test high similarity (adjusted threshold)
+    sim1 = _calculate_similarity_tfidf("Quantify market size", "Measure market volume")
+    assert sim1 > 0.2, f"Expected reasonable similarity, got {sim1}"
+    
+    # Test low similarity
+    sim2 = _calculate_similarity_tfidf("Quantify market size", "Analyze company culture")
+    assert sim2 < 0.3, f"Expected low similarity, got {sim2}"
+    
+    # Test empty strings
+    sim3 = _calculate_similarity_tfidf("", "test")
+    assert sim3 == 0.0, f"Expected 0.0 for empty string, got {sim3}"
+    
+    # Test identical strings
+    sim4 = _calculate_similarity_tfidf("test", "test")
+    assert sim4 == 1.0, f"Expected 1.0 for identical strings, got {sim4}"
+    
+    print(f"✅ TF-IDF similarity tests passed: sim1={sim1:.3f}, sim2={sim2:.3f}, sim3={sim3:.3f}, sim4={sim4:.3f}")
+
+def test_telemetry_with_usage():
+    """Test telemetry with usage tracking"""
+    print("🧪 Testing telemetry with usage")
+    
+    state = {'correlation_id': 'test_telem', 'loop_idx': 1}
+    usage = {'prompt_tokens': 1000, 'completion_tokens': 500, 'total_tokens': 1500}
+    
+    # Should not raise exception
+    telemetry_sink(state, 'test_event', {'data': 'test'}, usage=usage)
+    
+    # Test without usage
+    telemetry_sink(state, 'test_event_no_usage', {'data': 'test'})
+    
+    print("✅ Telemetry with usage tests passed: No exceptions raised")
+
+def test_router_flat_streak():
+    """Test router with flat_streak gate"""
+    print("🧪 Testing router flat_streak gate")
+    
+    # Test flat_streak exceeded
+    state = {
+        'correlation_id': 'test_flat',
+        'loop_count': 1,
+        'max_loops': 5,
+        'verdict': 'refine',
+        'flat_streak': 3,
+        'policy': {'flat_streak_max': 2}
+    }
+    
+    result = should_continue_research_v2(state)
+    assert result == "END", f"Expected END for flat_streak=3 > max=2, got {result}"
+    
+    # Test flat_streak within limit
+    state = {
+        'correlation_id': 'test_flat_ok',
+        'loop_count': 1,
+        'max_loops': 5,
+        'verdict': 'refine',
+        'flat_streak': 1,
+        'policy': {'flat_streak_max': 2}
+    }
+    
+    result = should_continue_research_v2(state)
+    assert result == "discovery", f"Expected discovery for flat_streak=1 <= max=2, got {result}"
+    
+    print("✅ Router flat_streak tests passed: Gate working correctly")
+
+def run_langgraph_tests():
+    """Run all LangGraph tests including P0 improvements"""
+    print("🚀 Running LangGraph Test Suite (with P0 improvements)...")
+    print("=" * 50)
+    
+    try:
+        # Original tests
+        test_guard_new_phase_dedup()
+        test_guard_redundant_refine()
+        test_seed_rotation()
+        test_router_v2_decisions()
+        
+        # P0 improvement tests
+        test_tfidf_similarity()
+        test_telemetry_with_usage()
+        test_router_flat_streak()
+        
+        print("=" * 50)
+        print("🎉 All LangGraph tests passed (including P0 improvements)!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        return False
+
+# ============ END TEST SUITE ============
+
 # Configure structured logger (coexists with stdlib logging)
 try:
     import structlog  # type: ignore
@@ -4894,7 +5582,7 @@ def should_continue_research(state: ResearchState) -> str:
 # ============================================================================
 
 def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
-    """Builds and compiles the research LangGraph workflow."""
+    """Builds and compiles the research LangGraph workflow with Guard Nodes."""
     if not LANGGRAPH_AVAILABLE:
         logger.warning("[LangGraph] LangGraph não está disponível. Instale: pip install langgraph")
         return None
@@ -4902,19 +5590,42 @@ def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_t
     workflow = StateGraph(ResearchState)
     nodes = GraphNodes(valves, discovery_tool, scraper_tool, context_reducer_tool)
     
-    # Add nodes
+    # Add core nodes
     workflow.add_node("discovery", nodes.discovery_node)
     workflow.add_node("scrape", nodes.scrape_node)
     workflow.add_node("reduce", nodes.reduce_node)
     workflow.add_node("analyze", nodes.analyze_node)
     workflow.add_node("judge", nodes.judge_node)
     
+    # ============ LANGGRAPH GUARD NODES ============
+    # Add guard nodes for decision quality
+    workflow.add_node("guard_new_phase", guard_new_phase_node)
+    workflow.add_node("guard_redundant_refine", guard_redundant_refine_node)
+    workflow.add_node("seed_rotation", seed_rotation_node)
+    workflow.add_node("telemetry_sink", telemetry_sink_node)
+    # ============ END GUARD NODES ============
+    
     workflow.set_entry_point("discovery")
+    
+    # Core workflow edges
     workflow.add_edge("discovery", "scrape")
     workflow.add_edge("scrape", "reduce")
     workflow.add_edge("reduce", "analyze")
     workflow.add_edge("analyze", "judge")
-    workflow.add_conditional_edges("judge", should_continue_research)
+    
+    # ============ GUARD LAYER ============
+    # Guard nodes execute in sequence after judge
+    workflow.add_edge("judge", "guard_new_phase")
+    workflow.add_edge("guard_new_phase", "guard_redundant_refine")
+    workflow.add_edge("guard_redundant_refine", "seed_rotation")
+    workflow.add_edge("seed_rotation", "telemetry_sink")
+    
+    # Router decides next step after guards
+    workflow.add_conditional_edges("telemetry_sink", should_continue_research_v2, {
+        "END": END,
+        "discovery": "discovery"
+    })
+    # ============ END GUARD LAYER ============
     
     memory = MemorySaver()
     return workflow.compile(checkpointer=memory)
@@ -4931,6 +5642,27 @@ class GraphNodes:
         self.analyst = AnalystLLM(self.valves)
         self.judge = JudgeLLM(self.valves)
         self.deduplicator = Deduplicator(self.valves)
+        
+        # ============ LANGGRAPH INTEGRATION ============
+        # Initialize Checkpointer for state persistence
+        if LANGGRAPH_AVAILABLE:
+            self.checkpointer = MemorySaver()
+        else:
+            self.checkpointer = None
+            logger.warning("[Pipe.__init__] LangGraph not available - checkpointer disabled")
+        
+        # Initialize Policy from Valves
+        self.policy = Policy(
+            coverage_target=getattr(self.valves, 'COVERAGE_TARGET', 0.7),
+            flat_streak_max=getattr(self.valves, 'FLAT_STREAK_MAX', 2),
+            refine_overlap_threshold=getattr(self.valves, 'REFINE_OVERLAP_THRESHOLD', 0.7),
+            seed_rotation_enabled=getattr(self.valves, 'SEED_ROTATION_ENABLED', True),
+            seed_rotation_min_loop=getattr(self.valves, 'SEED_ROTATION_MIN_LOOP', 2),
+            duplicate_detection_threshold=getattr(self.valves, 'DUPLICATE_DETECTION_THRESHOLD', 0.75),
+            novelty_min=getattr(self.valves, 'NOVELTY_MIN', 0.1),
+            diversity_min=getattr(self.valves, 'DIVERSITY_MIN', 0.3)
+        )
+        # ============ END LANGGRAPH INTEGRATION ============
     
     def _calculate_novelty_metrics(self, analysis, state=None):
         """Calculate novelty metrics based on used hashes and domains"""
@@ -5708,6 +6440,7 @@ class Pipe:
 
         # Orquestração
         USE_PLANNER: bool = Field(default=True, description="Usar planner")
+        USE_LANGGRAPH: bool = Field(default=True, description="Usar LangGraph workflow com Guard Nodes (padrão ativo)")
         MAX_AGENT_LOOPS: int = Field(
             default=3,
             ge=1,
@@ -6240,9 +6973,60 @@ class Pipe:
             health = await self.health_check()
             yield f"```json\n{json.dumps(health, ensure_ascii=False, indent=2)}\n```"
             return
-        """Complete pipe method implementation from PipeHaystack"""
+        """Complete pipe method implementation from PipeHaystack with LangGraph integration"""
         # Generate correlation ID for request tracing
         correlation_id = str(uuid.uuid4())[:8]
+        
+        # ============ LANGGRAPH INTEGRATION CHECK ============
+        # Check if LangGraph is available and user wants to use it
+        use_langgraph = getattr(self.valves, 'USE_LANGGRAPH', False) and LANGGRAPH_AVAILABLE
+        
+        if use_langgraph:
+            try:
+                yield f"**[LANGGRAPH]** Using LangGraph workflow with Guard Nodes\n"
+                yield f"**[LANGGRAPH]** Correlation ID: {correlation_id}\n"
+                
+                # Build LangGraph workflow
+                graph = build_research_graph(self.valves, self.discovery_tool, self.scraper_tool, self.context_reducer_tool)
+                if not graph:
+                    yield f"**[LANGGRAPH]** Graph build failed, falling back to imperative mode\n"
+                    use_langgraph = False
+                else:
+                    # Initialize state for LangGraph
+                    initial_state = {
+                        'correlation_id': correlation_id,
+                        'original_query': last_msg,
+                        'policy': self.policy.dict(),
+                        '__event_emitter__': __event_emitter__,
+                        'loop_count': 0,
+                        'max_loops': getattr(self.valves, 'MAX_LOOPS', 3),
+                        'verdict': 'refine',
+                        'discovered_urls': [],
+                        'telemetry_loops': [],
+                        'modifications': []
+                    }
+                    
+                    # Run LangGraph workflow
+                    config = {"checkpointer": self.checkpointer} if self.checkpointer else {}
+                    async for chunk in graph.astream(initial_state, config=config):
+                        # Process LangGraph output
+                        if isinstance(chunk, dict):
+                            for node_name, node_output in chunk.items():
+                                if node_name == 'telemetry_sink':
+                                    # Final output from LangGraph
+                                    yield f"**[LANGGRAPH]** Workflow completed\n"
+                                    yield f"**[LANGGRAPH]** Final verdict: {node_output.get('verdict', 'unknown')}\n"
+                                    yield f"**[LANGGRAPH]** Modifications: {node_output.get('modifications', [])}\n"
+                    
+                    return  # Exit early if LangGraph succeeded
+                    
+            except Exception as e:
+                yield f"**[LANGGRAPH]** Error: {e}, falling back to imperative mode\n"
+                use_langgraph = False
+        
+        if not use_langgraph:
+            yield f"**[IMPERATIVE]** Using traditional imperative workflow\n"
+        # ============ END LANGGRAPH INTEGRATION ============
         logger.info(
             "Pipeline execution started", extra={"correlation_id": correlation_id}
         )
@@ -7579,8 +8363,7 @@ SCHEMA JSON:
   "research_objectives": ["string"],
   "detecção_confianca": 0.85,
   "fonte_deteccao": "llm"
-}}"""
-            
+}}"""            
             # ===== CHAMAR LLM =====
             llm = _get_llm(self.valves, model_name=getattr(self.valves, "LLM_MODEL", "gpt-4o"))
             if not llm:

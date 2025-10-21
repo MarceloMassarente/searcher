@@ -101,6 +101,7 @@ O PipeLangNew é um sistema de pesquisa inteligente que utiliza múltiplos agent
 - Identifica dimensões faltantes e gaps
 
 ### 7. **ROUTER V3** - Decisões Inteligentes
+- **Priority 0**: Absolute iteration cap (100) → END (anti-dead-end)
 - **Priority 1**: High local completeness (≥0.85) → next phase ou global check
 - **Priority 2**: Max loops → global check ou next phase
 - **Priority 3**: Done verdict com moderate completeness → global check
@@ -217,6 +218,16 @@ GLOBAL_COMPLETENESS_THRESHOLD: float = 0.85
 LOCAL_COMPLETENESS_THRESHOLD: float = 0.85
 MAX_ADDITIONAL_PHASES: int = 3
 MAX_GLOBAL_ITERATIONS: int = 2
+```
+
+#### Anti-Dead-End Hardening
+```python
+ABSOLUTE_ITERATION_CAP: int = 100        # Hard-cap contra loops infinitos
+MAX_CLARIFICATION_ATTEMPTS: int = 3      # Limite de tentativas de clarificação
+MUST_TERMS_HARD_PRESERVE: bool = True    # Preservar chunks com must_terms
+CONTEXT_FALLBACK_RELAXATION: bool = True # Relaxar thresholds se fallback
+CLAIM_HASHES_CAP: int = 5000            # Limite de hashes em memória
+DOMAINS_CAP: int = 2000                  # Limite de domínios em memória
 ```
 
 #### Orquestração

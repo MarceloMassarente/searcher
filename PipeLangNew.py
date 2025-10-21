@@ -351,6 +351,19 @@ def should_continue_research_v3(state: dict) -> str:
     phase_idx = int(state.get('phase_idx', 0))
     total_phases = int(state.get('total_phases', 1))
     completeness_local = state.get('completeness_local', 0.0)
+
+    # Absolute hard-cap against dead-ends
+    absolute_iterations = int(state.get('_absolute_iterations', 0))
+    try:
+        valves = state.get('valves') or {}
+        absolute_cap = int(getattr(valves, 'ABSOLUTE_ITERATION_CAP', 100)) if hasattr(valves, 'ABSOLUTE_ITERATION_CAP') else int(valves.get('ABSOLUTE_ITERATION_CAP', 100))
+    except Exception:
+        absolute_cap = 100
+    if absolute_iterations >= absolute_cap:
+        logger.critical(f"[ROUTER_V3][{correlation_id}] ABSOLUTE CAP REACHED: {absolute_iterations}")
+        return "END"
+    # increment tracker for next call
+    state['_absolute_iterations'] = absolute_iterations + 1
     
     # Priority 1: High local completeness (>= 0.85)
     if completeness_local >= 0.85:
@@ -719,6 +732,9 @@ async def context_detection_node(state: ResearchState, pipe_instance) -> Researc
         
         # Adicionar contexto ao state
         state['detected_context'] = detected_context
+        # Marcar qualidade da detecção (llm|fallback)
+        fonte = (detected_context or {}).get('fonte_deteccao', 'unknown')
+        state['context_detection_quality'] = 'llm' if fonte == 'llm' else 'fallback'
         state['goto'] = 'coordinator'
         
         logger.info(f"[CONTEXT_DETECTION][{correlation_id}] Contexto detectado: {detected_context}")
@@ -762,7 +778,7 @@ def coordinator_node(state: ResearchState) -> ResearchState:
     query = state.get("user_query", "")
     correlation_id = state.get("correlation_id", "unknown")
     
-    # Query vaga
+    # Query vaga com limitação de tentativas
     if len(query.split()) < 5:
         logger.info(f"[COORDINATOR][{correlation_id}] Query vaga detectada: '{query}'")
         
@@ -774,10 +790,27 @@ def coordinator_node(state: ResearchState) -> ResearchState:
             "success": True
         })
         
+        # Limitar tentativas de clarificação
+        attempts = int(state.get('_clarification_attempts', 0))
+        max_attempts = 3
+        try:
+            valves = state.get('valves') or {}
+            max_attempts = int(getattr(valves, 'MAX_CLARIFICATION_ATTEMPTS', 3)) if hasattr(valves, 'MAX_CLARIFICATION_ATTEMPTS') else int(valves.get('MAX_CLARIFICATION_ATTEMPTS', 3))
+        except Exception:
+            pass
+        if attempts >= max_attempts:
+            # Força saída do ciclo de clarificação
+            return {
+                **state,
+                "goto": "researcher",
+                "needs_clarification": False,
+                "_clarification_attempts": attempts
+            }
         return {
             **state,
             "goto": "coordinator",
             "needs_clarification": True,
+            "_clarification_attempts": attempts + 1,
             "messages": ["â“ Sua pergunta Ã© muito vaga. Pode detalhar?"]
         }
     
@@ -1281,6 +1314,12 @@ async def generate_phases_node(state: ResearchState, valves, planner) -> Researc
     correlation_id = state.get("correlation_id", "unknown")
     
     try:
+        # Pre-validate contract
+        contract = state.get("contract", {}) or {}
+        if not isinstance(contract, dict) or "phases" not in contract and "fases" not in contract:
+            logger.error(f"[GENERATE_PHASES][{correlation_id}] Invalid contract structure")
+            return {**state, "needs_additional_phases": False, "verdict": "done"}
+
         new_phases = await planner.generate_additional_phases(
             original_query=state.get("original_query", ""),
             missing_dimensions=state.get("missing_dimensions", []),
@@ -1288,9 +1327,18 @@ async def generate_phases_node(state: ResearchState, valves, planner) -> Researc
             global_verdict=state.get("global_verdict", {}),
             valves=valves
         )
+        # Validate new_phases structure
+        if not new_phases or not isinstance(new_phases, list):
+            logger.warning(f"[GENERATE_PHASES][{correlation_id}] No valid phases generated")
+            return {**state, "needs_additional_phases": False}
+        required_keys = {"objective", "seed_query"}
+        for p in new_phases:
+            if not isinstance(p, dict) or not required_keys.issubset(set(p.keys())):
+                logger.error(f"[GENERATE_PHASES][{correlation_id}] Invalid phase structure: {p}")
+                return {**state, "needs_additional_phases": False}
         
         # Update contract
-        current_contract = state.get("contract", {})
+        current_contract = contract
         current_phases = current_contract.get("phases", [])
         current_contract["phases"] = current_phases + new_phases
         
@@ -1321,11 +1369,12 @@ async def generate_phases_node(state: ResearchState, valves, planner) -> Researc
         }, usage=None)
         
         # Validate state mutation
+        safe_phase_idx = len(current_phases)
         new_state = {
             **state,
             "contract": current_contract,
             "total_phases": total_phases,
-            "phase_idx": len(current_phases),  # Start at first new phase
+            "phase_idx": safe_phase_idx,  # Start at first new phase
             "loop_count": 0,
             "needs_additional_phases": False,
         }
@@ -1714,6 +1763,107 @@ def run_multi_agent_tests():
     except Exception as e:
         print(f"âŒ Multi-Agent test failed: {e}")
         return False
+
+def test_router_hard_cap():
+    """Test Router V3 hard-cap against infinite loops"""
+    print("🧪 Testing Router V3 Hard-Cap")
+    
+    # Test absolute cap reached
+    state = {
+        'correlation_id': 'test_hardcap',
+        'loop_count': 0,
+        'max_loops': 3,
+        'verdict': 'done',
+        'phase_idx': 0,
+        'total_phases': 1,
+        'completeness_local': 0.5,
+        '_absolute_iterations': 100,  # At cap
+        'valves': type('Valves', (), {'ABSOLUTE_ITERATION_CAP': 100})()
+    }
+    
+    result = should_continue_research_v3(state)
+    assert result == "END", f"Expected END, got {result}"
+    print("✅ Hard-cap correctly triggers END")
+
+def test_coordinator_clarification_limit():
+    """Test coordinator clarification attempt limit"""
+    print("🧪 Testing Coordinator Clarification Limit")
+    
+    # Test max attempts reached
+    state = {
+        'user_query': 'test',  # Vague query
+        'correlation_id': 'test_clarification',
+        '_clarification_attempts': 3,  # At limit
+        'valves': type('Valves', (), {'MAX_CLARIFICATION_ATTEMPTS': 3})()
+    }
+    
+    result = coordinator_node(state)
+    assert result['goto'] == 'researcher', f"Expected researcher, got {result['goto']}"
+    assert not result['needs_clarification'], "Should not need clarification"
+    print("✅ Clarification limit correctly forces researcher")
+
+def test_generate_phases_validation():
+    """Test generate_phases_node validation and recovery"""
+    print("🧪 Testing Generate Phases Validation")
+    
+    # Test invalid contract
+    state = {
+        'correlation_id': 'test_phases',
+        'contract': None,  # Invalid
+        'missing_dimensions': ['test'],
+        'global_verdict': {}
+    }
+    
+    class MockPlanner:
+        async def generate_additional_phases(self, **kwargs):
+            return []
+    
+    result = await generate_phases_node(state, {}, MockPlanner())
+    assert not result['needs_additional_phases'], "Should not need additional phases"
+    assert result['verdict'] == 'done', f"Expected done, got {result['verdict']}"
+    print("✅ Invalid contract correctly handled")
+
+def test_dedup_must_terms_preservation():
+    """Test deduplicator preserves must_terms chunks"""
+    print("🧪 Testing Dedup Must Terms Preservation")
+    
+    class MockValves:
+        MUST_TERMS_HARD_PRESERVE = True
+        DEDUP_ALGORITHM = "mmr"
+        DEDUP_SIMILARITY_THRESHOLD = 0.85
+    
+    dedup = Deduplicator(MockValves())
+    chunks = [
+        "Regular content here",
+        "Important content with must_term keyword",
+        "More regular content",
+        "Another must_term reference here"
+    ]
+    must_terms = ["must_term"]
+    
+    result = dedup.dedupe(chunks, max_chunks=2, must_terms=must_terms)
+    
+    # Check that must_term chunks are preserved
+    preserved_chunks = result['chunks']
+    must_term_chunks = [c for c in preserved_chunks if 'must_term' in c.lower()]
+    assert len(must_term_chunks) > 0, "Must-term chunks should be preserved"
+    print("✅ Must-terms correctly preserved in dedup")
+
+def test_context_detection_fallback_flag():
+    """Test context detection fallback quality flag"""
+    print("🧪 Testing Context Detection Fallback Flag")
+    
+    # Test fallback context
+    state = {
+        'user_query': 'test query',
+        'correlation_id': 'test_context'
+    }
+    
+    result = await context_detection_node(state, None)  # No pipe_instance = fallback
+    
+    assert result['context_detection_quality'] == 'fallback', "Should mark as fallback"
+    assert result['detected_context']['fonte_deteccao'] == 'fallback', "Should use fallback source"
+    print("✅ Context detection fallback correctly flagged")
 
 def run_langgraph_tests():
     """Run all LangGraph tests including P0 improvements and Multi-Agent"""
@@ -2839,6 +2989,18 @@ class Deduplicator:
 
         original_count = len(chunks)
 
+        # Hard preserve for must_terms (when enabled)
+        hard_preserve = getattr(self.valves, "MUST_TERMS_HARD_PRESERVE", True)
+        must_terms = must_terms or []
+        critical_prefix: List[str] = []
+        if hard_preserve and must_terms:
+            lower_chunks = [(i, (ch or "")) for i, ch in enumerate(chunks)]
+            critical_prefix = [ch for i, ch in lower_chunks if any(t.lower() in ch.lower() for t in must_terms)]
+            other = [ch for i, ch in lower_chunks if ch not in critical_prefix]
+            keep_other = max(0, max_chunks - len(critical_prefix))
+            chunks = [ch for _, ch in other]
+            max_chunks = keep_other
+
         # Context-aware prioritization (se ativado)
         enable_context_aware = (
             enable_context_aware 
@@ -2997,8 +3159,9 @@ class Deduplicator:
             deduped_count = len(final_chunks)
                 
             # Retornar resultado context-aware
+            merged = (critical_prefix + final_chunks) if critical_prefix else final_chunks
             result = {
-                "chunks": final_chunks,
+                "chunks": merged[:max(len(merged), 1)],
                 "original_count": original_count,
                 "deduped_count": deduped_count,
                 "reduction_pct": (original_count - deduped_count) / original_count * 100,
@@ -3100,9 +3263,9 @@ class Deduplicator:
 
         # Combinar: Se reference_first, recent VÃŠM PRIMEIRO
         if reference_first:
-            result = (recent_chunks + deduped_older)[:max_chunks]
+            result = (critical_prefix + recent_chunks + deduped_older)[:max_chunks + len(critical_prefix)] if critical_prefix else (recent_chunks + deduped_older)[:max_chunks]
         else:
-            result = (deduped_older + recent_chunks)[:max_chunks]
+            result = (critical_prefix + deduped_older + recent_chunks)[:max_chunks + len(critical_prefix)] if critical_prefix else (deduped_older + recent_chunks)[:max_chunks]
 
         # Preservar ordem original se solicitado
         if preserve_order:
@@ -7806,6 +7969,40 @@ class Pipe:
         )
 
         # ===== HAS-ENOUGH-CONTEXT CONFIGURATION =====
+        # Robustez e governança (novos)
+        ABSOLUTE_ITERATION_CAP: int = Field(
+            default=100,
+            ge=10,
+            le=10000,
+            description="Limite absoluto de iterações por execução para evitar dead-ends"
+        )
+        MAX_CLARIFICATION_ATTEMPTS: int = Field(
+            default=3,
+            ge=1,
+            le=10,
+            description="Máximo de tentativas de clarificação no coordinator antes de forçar researcher"
+        )
+        MUST_TERMS_HARD_PRESERVE: bool = Field(
+            default=True,
+            description="Preservar chunks que contenham must_terms antes da deduplicação"
+        )
+        CONTEXT_FALLBACK_RELAXATION: bool = Field(
+            default=True,
+            description="Se detecção de contexto cair em fallback, relaxar thresholds no planner"
+        )
+        # Caps para crescimento de estruturas globais
+        CLAIM_HASHES_CAP: int = Field(
+            default=5000,
+            ge=100,
+            le=100000,
+            description="Máximo de hashes de fatos mantidos em memória global"
+        )
+        DOMAINS_CAP: int = Field(
+            default=2000,
+            ge=100,
+            le=100000,
+            description="Máximo de domínios únicos mantidos em memória global"
+        )
         ENABLE_GLOBAL_COMPLETENESS_CHECK: bool = Field(
             default=True,
             description="Enable global completeness evaluation (Deerflow-style)"
@@ -8838,15 +9035,31 @@ class Pipe:
                     yield f"**[FASE {phase_index}]** Verdict: {verdict} (loops: {loop_count})\n"
                     yield f"**[FASE {phase_index}]** DuraÃ§Ã£o: {phase_duration:.1f}s\n"
                     
-                    # ===== UPDATE GLOBAL STATE =====
-                    # Preserve state for next phase
-                    global_state.update({
-                        "scraped_cache": final_state.get("scraped_cache", global_state["scraped_cache"]),
-                        "used_claim_hashes": final_state.get("used_claim_hashes", global_state["used_claim_hashes"]),
-                        "used_domains": final_state.get("used_domains", global_state["used_domains"]),
-                        "accumulated_context": final_state.get("accumulated_context", global_state["accumulated_context"]),
-                        "telemetry_loops": final_state.get("telemetry_loops", global_state["telemetry_loops"]),
-                    })
+                    # ===== UPDATE GLOBAL STATE (merge + caps) =====
+                    # Merge scraped_cache
+                    try:
+                        fs_cache = final_state.get("scraped_cache", {}) or {}
+                        if isinstance(fs_cache, dict):
+                            global_state["scraped_cache"].update(fs_cache)
+                    except Exception:
+                        pass
+                    # Merge lists with dedup + caps
+                    def _merge_list_cap(dst_key: str, src_list: list, cap: int):
+                        try:
+                            base = global_state.get(dst_key, []) or []
+                            merged = list(dict.fromkeys(base + (src_list or [])))
+                            global_state[dst_key] = merged[-cap:]
+                        except Exception:
+                            pass
+                    claims_cap = int(getattr(self.valves, 'CLAIM_HASHES_CAP', 5000))
+                    domains_cap = int(getattr(self.valves, 'DOMAINS_CAP', 2000))
+                    _merge_list_cap("used_claim_hashes", final_state.get("used_claim_hashes", []), claims_cap)
+                    _merge_list_cap("used_domains", final_state.get("used_domains", []), domains_cap)
+                    # Accumulated context and telemetry (prefer latest if provided)
+                    if final_state.get("accumulated_context"):
+                        global_state["accumulated_context"] = final_state["accumulated_context"]
+                    if final_state.get("telemetry_loops"):
+                        global_state["telemetry_loops"] = final_state["telemetry_loops"]
                     
                     # Add to phase results
                     phase_result = {

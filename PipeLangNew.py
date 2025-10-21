@@ -848,6 +848,11 @@ def coordinator_node(state: ResearchState) -> ResearchState:
         
         # Query vaga detectada (mas dentro do limite)
         logger.info(f"[COORDINATOR][{correlation_id}] Query vaga detectada: '{query}' (tentativa {attempts + 1}/{max_attempts})")
+        
+        # ✅ INCREMENTAR loop_count para sinalizar progresso do grafo
+        current_loop_count = int(state.get('loop_count', 0))
+        state['loop_count'] = current_loop_count + 1
+        
         return {
             **state,
             "goto": "coordinator",
@@ -8890,6 +8895,16 @@ class Pipe:
                         }
                         
                         async for event in graph.astream_events(initial_state, config, version="v1"):
+                            # ✅ DEFENSIVE: LangGraph/tracer may yield strings/log lines
+                            if isinstance(event, str):
+                                # stream plain strings to user
+                                yield event + "\n"
+                                continue
+                            if not isinstance(event, dict):
+                                # unknown shape — log and continue
+                                logger.debug(f"[PIPE] Unexpected event type from graph: {type(event)}")
+                                continue
+                            
                             event_type = event.get("event")
                             
                             # Stream messages from agents

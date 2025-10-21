@@ -329,112 +329,71 @@ def validate_research_state(state: dict, correlation_id: str = "unknown") -> tup
 
 # ===== END STATE VALIDATION LAYER =====
 
-def should_continue_research_v2(state: dict) -> str:
-    """Enhanced router with Policy-based decisions and state validation"""
+def should_continue_research_v3(state: dict) -> str:
+    """Router V3 with local and global completeness gates"""
+    
     correlation_id = state.get('correlation_id', 'unknown')
     
-    # Validar state antes de processar
+    # Validate state
     is_valid, errors = validate_research_state(state, correlation_id)
     if not is_valid:
-        logger.error(f"[ROUTER_V2][{correlation_id}] Invalid state: {errors}")
+        logger.error(f"[ROUTER_V3][{correlation_id}] Invalid state: {errors}")
         return "END"
     
-    # ===== SEMANTIC LOOP DETECTION =====
-    import hashlib
-    import json
-    
-    # Hash do state relevante (excluir campos que mudam sempre)
-    state_snapshot = {
-        'verdict': state.get('verdict'),
-        'query': state.get('current_query', ''),
-        'phase_id': state.get('current_phase_id', ''),
-        'facts_count': len(state.get('facts', [])),
-        'discoveries_count': len(state.get('discoveries', []))
-    }
-    
-    state_hash = hashlib.md5(
-        json.dumps(state_snapshot, sort_keys=True).encode()
-    ).hexdigest()
-    
-    prev_hash = state.get('_prev_state_hash', '')
-    
-    if state_hash == prev_hash:
-        logger.error(f"[ROUTER_V2][{correlation_id}] Semantic loop detected (identical state)")
-        return "END"
-    
-    state['_prev_state_hash'] = state_hash
-    # ===== END SEMANTIC LOOP DETECTION =====
-    
-    # Get policy from state or use defaults
+    # Get values
     policy = state.get('policy', {})
-    if isinstance(policy, dict):
-        coverage_target = policy.get('coverage_target', 0.7)
-        flat_streak_max = policy.get('flat_streak_max', 2)
-        novelty_min = policy.get('novelty_min', 0.1)
-        diversity_min = policy.get('diversity_min', 0.3)
-    else:
-        # Policy is a Pydantic model
-        coverage_target = policy.coverage_target
-        flat_streak_max = policy.flat_streak_max
-        novelty_min = policy.novelty_min
-        diversity_min = policy.diversity_min
-    
-    # Type coercion
     loop_count = int(state.get('loop_count', 0))
     max_loops = int(state.get('max_loops', 3))
     verdict = state.get('verdict', 'done')
-    flat_streak = int(state.get('flat_streak', 0))  # NEW
+    phase_idx = int(state.get('phase_idx', 0))
+    total_phases = int(state.get('total_phases', 1))
+    completeness_local = state.get('completeness_local', 0.0)
     
-    # Priority 1: Max loops exceeded
+    # Priority 1: High local completeness (>= 0.85)
+    if completeness_local >= 0.85:
+        logger.info(f"[ROUTER_V3][{correlation_id}] High completeness ({completeness_local:.2f})")
+        
+        if phase_idx >= total_phases - 1:
+            return "global_check"  # Last phase -> check global
+        else:
+            state['phase_idx'] = phase_idx + 1
+            state['loop_count'] = 0  # Reset loop counter
+            return "discovery"  # Advance to next phase
+    
+    # Priority 2: Max loops (safety net)
     if loop_count >= max_loops:
-        logger.warning(f"[ROUTER_V2][{correlation_id}] Max loops reached ({loop_count}/{max_loops})")
-        return "END"
+        logger.warning(f"[ROUTER_V3][{correlation_id}] Max loops ({loop_count}/{max_loops})")
+        
+        if phase_idx >= total_phases - 1:
+            return "global_check"
+        else:
+            state['phase_idx'] = phase_idx + 1
+            state['loop_count'] = 0
+            return "discovery"
     
-    # Priority 2: Judge decided DONE
-    if verdict == "done":
-        logger.info(f"[ROUTER_V2][{correlation_id}] Judge decided DONE after {loop_count} loops")
-        return "END"
+    # Priority 3: Done verdict with moderate completeness
+    if verdict == "done" and completeness_local >= 0.70:
+        if phase_idx >= total_phases - 1:
+            return "global_check"
+        else:
+            state['phase_idx'] = phase_idx + 1
+            state['loop_count'] = 0
+            return "discovery"
     
-    # Priority 3: Failed query
+    # Priority 4: Failed query
     if state.get('failed_query', False):
-        logger.warning(f"[ROUTER_V2][{correlation_id}] Query failed")
-        return "END"
+        logger.warning(f"[ROUTER_V3][{correlation_id}] Query failed")
+        return "global_check" if phase_idx >= total_phases - 1 else "discovery"
     
-    # Priority 4: Flat streak exceeded (NEW)
+    # Priority 5: Flat streak
+    flat_streak = int(state.get('flat_streak', 0))
+    flat_streak_max = policy.get('flat_streak_max', 2) if isinstance(policy, dict) else 2
     if flat_streak >= flat_streak_max:
-        logger.warning(
-            f"[ROUTER_V2][{correlation_id}] Flat streak exceeded: "
-            f"{flat_streak}/{flat_streak_max} "
-            f"(no progress in last {flat_streak} loops)"
-        )
-        
-        # Telemetria para monitoring
-        telemetry_sink(state, "flat_streak_triggered", {
-            "flat_streak": flat_streak,
-            "flat_streak_max": flat_streak_max,
-            "telemetry_loops_count": len(state.get('telemetry_loops', []))
-        })
-        
-        return "END"
-    
-    # Priority 5: Diminishing returns (enhanced with Policy)
-    if state.get('diminishing_returns', False):
-        logger.warning(f"[ROUTER_V2][{correlation_id}] Diminishing returns detected")
-        return "END"
-    
-    # Priority 5: Coverage + novelty + diversity check
-    coverage = state.get('coverage_score', 0.0)
-    novel_fact_ratio = state.get('new_facts_ratio', 0.0)
-    domain_diversity = state.get('domain_diversity', 0.0)
-    
-    if (coverage >= coverage_target and 
-        novel_fact_ratio < novelty_min and 
-        domain_diversity < diversity_min):
-        logger.warning(f"[ROUTER_V2][{correlation_id}] Low novelty/diversity despite good coverage")
-        return "END"
+        logger.warning(f"[ROUTER_V3][{correlation_id}] Flat streak ({flat_streak}/{flat_streak_max})")
+        return "global_check" if phase_idx >= total_phases - 1 else "discovery"
     
     # Continue iteration
-    logger.info(f"[ROUTER_V2][{correlation_id}] Continuing loop {loop_count + 1}/{max_loops} (verdict={verdict}, flat_streak={flat_streak})")
+    logger.info(f"[ROUTER_V3][{correlation_id}] Continuing loop {loop_count + 1}/{max_loops}")
     return "discovery"
 
 # ============ END WRAPPER FUNCTIONS ============
@@ -1139,6 +1098,113 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
             "messages": [f"âš ï¸ Erro no relatÃ³rio: {str(e)[:100]}..."]
         }
 
+async def global_completeness_check_node(state: ResearchState, valves) -> ResearchState:
+    """Check if accumulated context is sufficient"""
+    
+    correlation_id = state.get("correlation_id", "unknown")
+    em = state.get("__event_emitter__")
+    
+    await _safe_emit(em, f"[GLOBAL_CHECK][{correlation_id}] Evaluating completeness")
+    
+    try:
+        judge = JudgeLLM(valves)
+        
+        all_phases_results = state.get("phase_results", [])
+        
+        if not all_phases_results:
+            return {
+                **state,
+                "global_completeness": 0.0,
+                "needs_additional_phases": False,
+                "verdict": "done",
+            }
+        
+        # Call global evaluation
+        global_verdict = await judge.has_enough_context_global(
+            all_phases_results=all_phases_results,
+            original_query=state.get("original_query", ""),
+            contract=state.get("contract", {}),
+            valves=valves
+        )
+        
+        sufficient = global_verdict["sufficient"]
+        completeness = global_verdict["completeness"]
+        
+        await _safe_emit(
+            em,
+            f"[GLOBAL_CHECK][{correlation_id}] Completeness: {completeness:.2f}, Sufficient: {sufficient}"
+        )
+        
+        if sufficient:
+            return {
+                **state,
+                "global_completeness": completeness,
+                "needs_additional_phases": False,
+                "verdict": "done",
+                "global_verdict": global_verdict,
+            }
+        else:
+            return {
+                **state,
+                "global_completeness": completeness,
+                "needs_additional_phases": True,
+                "suggested_phases": global_verdict.get("suggested_phases", []),
+                "missing_dimensions": global_verdict.get("missing_dimensions", []),
+                "verdict": "new_phases_needed",
+                "global_verdict": global_verdict,
+            }
+    
+    except Exception as e:
+        logger.error(f"[GLOBAL_CHECK] Error: {e}")
+        return {
+            **state,
+            "global_completeness": 0.75,
+            "needs_additional_phases": False,
+            "verdict": "done",
+        }
+
+async def generate_phases_node(state: ResearchState, valves, planner) -> ResearchState:
+    """Generate and inject additional phases into contract"""
+    
+    correlation_id = state.get("correlation_id", "unknown")
+    
+    try:
+        new_phases = await planner.generate_additional_phases(
+            original_query=state.get("original_query", ""),
+            missing_dimensions=state.get("missing_dimensions", []),
+            existing_phases=state.get("contract", {}).get("phases", []),
+            global_verdict=state.get("global_verdict", {}),
+            valves=valves
+        )
+        
+        # Update contract
+        current_contract = state.get("contract", {})
+        current_phases = current_contract.get("phases", [])
+        current_contract["phases"] = current_phases + new_phases
+        
+        total_phases = len(current_contract["phases"])
+        
+        logger.info(
+            f"[GENERATE_PHASES][{correlation_id}] Added {len(new_phases)} phases. Total: {total_phases}"
+        )
+        
+        return {
+            **state,
+            "contract": current_contract,
+            "total_phases": total_phases,
+            "phase_idx": len(current_phases),  # Start at first new phase
+            "loop_count": 0,
+            "needs_additional_phases": False,
+        }
+    
+    except Exception as e:
+        logger.error(f"[GENERATE_PHASES] Error: {e}")
+        return {
+            **state,
+            "needs_additional_phases": False,
+            "verdict": "done",
+        }
+
 # ============ END MULTI-AGENT NODES ============
 
 # ============ LANGGRAPH TEST SUITE ============
@@ -1247,7 +1313,7 @@ def test_router_v2_decisions():
         'max_loops': 3,
         'verdict': 'refine'
     }
-    result = should_continue_research_v2(state)
+    result = should_continue_research_v3(state)
     assert result == "END", f"Expected 'END' for max loops, got {result}"
     
     # Test done verdict
@@ -1257,7 +1323,7 @@ def test_router_v2_decisions():
         'max_loops': 3,
         'verdict': 'done'
     }
-    result = should_continue_research_v2(state)
+    result = should_continue_research_v3(state)
     assert result == "END", f"Expected 'END' for done verdict, got {result}"
     
     # Test continue
@@ -1267,7 +1333,7 @@ def test_router_v2_decisions():
         'max_loops': 3,
         'verdict': 'refine'
     }
-    result = should_continue_research_v2(state)
+    result = should_continue_research_v3(state)
     assert result == "discovery", f"Expected 'discovery' to continue, got {result}"
     
     print("âœ… Router v2 tests passed: All decision paths working correctly")
@@ -1286,11 +1352,11 @@ def test_semantic_loop_detection():
     }
     
     # Primeira chamada - deve continuar
-    result1 = should_continue_research_v2(state)
+    result1 = should_continue_research_v3(state)
     assert result1 == "discovery", f"Expected discovery, got {result1}"
     
     # Segunda chamada com mesmo state - deve detectar loop
-    result2 = should_continue_research_v2(state)
+    result2 = should_continue_research_v3(state)
     assert result2 == "END", f"Expected END (loop detected), got {result2}"
     
     print("âœ… Semantic loop detection working correctly")
@@ -1381,7 +1447,7 @@ def test_router_flat_streak():
         'policy': {'flat_streak_max': 2}
     }
     
-    result = should_continue_research_v2(state)
+    result = should_continue_research_v3(state)
     assert result == "END", f"Expected END for flat_streak=3 > max=2, got {result}"
     
     # Test flat_streak within limit
@@ -1394,7 +1460,7 @@ def test_router_flat_streak():
         'policy': {'flat_streak_max': 2}
     }
     
-    result = should_continue_research_v2(state)
+    result = should_continue_research_v3(state)
     assert result == "discovery", f"Expected discovery for flat_streak=1 <= max=2, got {result}"
     
     print("âœ… Router flat_streak tests passed: Gate working correctly")
@@ -5557,6 +5623,134 @@ class JudgeLLM:
             "telemetry_loops": telemetry_loops,  # Persist telemetry loops across iterations
         }
 
+    async def has_enough_context_global(
+        self,
+        all_phases_results: List[Dict],
+        original_query: str,
+        contract: Dict,
+        valves,
+    ) -> Dict:
+        """Evaluate global completeness across all phases (Deerflow-style)"""
+
+        # 1) Accumulate facts, domains and coverage proxy
+        accumulated_facts: List[Dict] = []
+        accumulated_domains: set = set()
+        total_coverage: float = 0.0
+        phase_count: int = 0
+
+        for phase_result in all_phases_results or []:
+            analysis: Dict = phase_result.get("analysis", {}) or {}
+            facts: List[Dict] = analysis.get("facts", []) or []
+            accumulated_facts.extend(facts)
+
+            for fact in facts:
+                domain = (fact.get("fonte") or {}).get("dominio")
+                if domain:
+                    accumulated_domains.add(domain)
+
+            coverage_ph = float((analysis.get("self_assessment") or {}).get("coverage_score", 0.0))
+            total_coverage += coverage_ph
+            phase_count += 1
+
+        avg_coverage = (total_coverage / phase_count) if phase_count > 0 else 0.0
+
+        # 2) Build objective metrics
+        planned_list = contract.get("fases") or contract.get("phases") or []
+        global_metrics: Dict[str, float] = {
+            "total_facts": float(len(accumulated_facts)),
+            "total_domains": float(len(accumulated_domains)),
+            "avg_coverage": float(avg_coverage),
+            "phases_completed": float(len(all_phases_results or [])),
+            "phases_planned": float(len(planned_list)),
+        }
+
+        # 3) Build prompt and call LLM
+        prompt = self._build_global_completeness_prompt(
+            original_query=original_query,
+            accumulated_facts=accumulated_facts,
+            global_metrics=global_metrics,
+            contract=contract,
+        )
+
+        safe_params = get_safe_llm_params(self.model_name, self.generation_kwargs)
+        out = await _safe_llm_run_with_retry(
+            self.llm,
+            prompt,
+            safe_params,
+            timeout=getattr(valves, "LLM_TIMEOUT_DEFAULT", 60),
+            max_retries=int(getattr(valves, "LLM_MAX_RETRIES", 2) or 2),
+        )
+        result = parse_json_resilient((out or {}).get("replies", [""])[0], mode="balanced", allow_arrays=False) or {}
+
+        # 4) Combine LLM estimate with objective metrics
+        completeness = self._calculate_global_completeness(result, global_metrics)
+
+        return {
+            "sufficient": bool(result.get("sufficient", False)),
+            "completeness": float(completeness),
+            "missing_dimensions": result.get("missing_dimensions", []),
+            "reasoning": result.get("reasoning", ""),
+            "suggested_phases": result.get("suggested_phases", []),
+            "global_metrics": global_metrics,
+        }
+
+    def _build_global_completeness_prompt(
+        self,
+        original_query: str,
+        accumulated_facts: List[Dict],
+        global_metrics: Dict,
+        contract: Dict,
+    ) -> str:
+        """Constructs a compact, structured prompt for holistic evaluation."""
+
+        planned = contract.get("fases") or contract.get("phases") or []
+        planned_dimensions = [
+            (p.get("objetivo") or p.get("objective") or "").strip() for p in planned
+        ]
+
+        # Build small sample of facts for the Judge to anchor
+        sample_lines: List[str] = []
+        for f in accumulated_facts[:20]:
+            text = (f.get("texto") or f.get("conteudo") or "").strip()
+            if text:
+                sample_lines.append(f"- {text[:160]}")
+        fact_sample = "\n".join(sample_lines)
+
+        dims = "\n".join(f"{idx+1}. {d}" for idx, d in enumerate(planned_dimensions) if d)
+
+        return (
+            f"Avalie se temos CONTEXTO SUFICIENTE para responder COMPLETAMENTE à query original.\n\n"
+            f"QUERY ORIGINAL:\n{original_query}\n\n"
+            f"CONTEXTO ACUMULADO:\n"
+            f"- Total de fatos: {int(global_metrics['total_facts'])}\n"
+            f"- Domínios únicos: {int(global_metrics['total_domains'])}\n"
+            f"- Fases completadas: {int(global_metrics['phases_completed'])}/{int(global_metrics['phases_planned'])}\n"
+            f"- Coverage médio: {global_metrics['avg_coverage']:.2f}\n\n"
+            f"DIMENSÕES PLANEJADAS:\n{dims}\n\n"
+            f"AMOSTRA DE FATOS (máx 20):\n{fact_sample}\n\n"
+            "Responda JSON:\n{\n"
+            "  \"sufficient\": true|false,\n"
+            "  \"completeness_estimate\": 0.0-1.0,\n"
+            "  \"missing_dimensions\": [\"dim1\", \"dim2\"],\n"
+            "  \"reasoning\": \"explicação sucinta\",\n"
+            "  \"suggested_phases\": [{\"objective\": \"...\", \"rationale\": \"...\"}]\n"
+            "}"
+        )
+
+    def _calculate_global_completeness(self, llm_verdict: Dict, global_metrics: Dict) -> float:
+        """Blend LLM estimate with objective metrics for a stable score."""
+
+        # LLM estimate (60%)
+        llm_estimate = float(llm_verdict.get("completeness_estimate", 0.5) or 0.5)
+
+        # Objective metrics (40%)
+        fact_score = min(global_metrics.get("total_facts", 0.0) / 30.0, 1.0)
+        domain_score = min(global_metrics.get("total_domains", 0.0) / 10.0, 1.0)
+        coverage_score = float(global_metrics.get("avg_coverage", 0.0) or 0.0)
+        objective_score = 0.4 * fact_score + 0.3 * domain_score + 0.3 * coverage_score
+
+        return round(0.6 * llm_estimate + 0.4 * objective_score, 3)
+
 
 # ==================== PROMPTS DICTIONARY ====================
 
@@ -5701,6 +5895,24 @@ VocÃª Ã© um ANALYST. Extraia 3-5 fatos importantes do contexto.
 - Necessidade de abordar aspectos nÃ£o cobertos pela pesquisa atual?
 
 **PRINCÃPIO FUNDAMENTAL:** Priorize QUALIDADE sobre QUANTIDADE. Ã‰ melhor ter poucos fatos de alta qualidade que respondem ao objetivo do que muitos fatos genÃ©ricos.""",
+
+    # ===== JUDGE GLOBAL COMPLETENESS PROMPT =====
+    "judge_global_system": """Você é um AVALIADOR HOLÍSTICO de completude de pesquisa.
+
+MISSÃO: Determinar se o contexto acumulado é SUFICIENTE para responder COMPLETAMENTE à query original.
+
+CRITÉRIOS (threshold >= 0.85):
+1. COBERTURA DIMENSIONAL (40%): Todas dimensões relevantes exploradas?
+2. QUALIDADE DAS FONTES (25%): Fontes diversas, primárias, recentes?
+3. PROFUNDIDADE (20%): 30+ fatos, nível de detalhe adequado?
+4. CONSISTÊNCIA (15%): Informações consistentes, contradições resolvidas?
+
+IMPORTANTE:
+- Seja RIGOROSO: Melhor adicionar fase a mais que entregar incompleto
+- Se insuficiente, identifique EXATAMENTE quais dimensões faltam
+- Sugira fases ESPECÍFICAS para cobrir gaps
+
+Responda SEMPRE em JSON válido.""",
 }
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
@@ -6146,6 +6358,93 @@ INSTRUÃ‡Ã•ES:
         
         # Fallback return (should never reach here)
         return {"contract": {}, "contract_hash": ""}
+
+    async def generate_additional_phases(
+        self,
+        original_query: str,
+        missing_dimensions: List[str],
+        existing_phases: List[dict],
+        global_verdict: dict,
+        valves: Any
+    ) -> List[dict]:
+        """Generate additional phases to cover gaps"""
+        
+        # Build prompt
+        prompt = self._build_additional_phases_prompt(
+            original_query, missing_dimensions, existing_phases, global_verdict
+        )
+        
+        # Call LLM
+        safe_params = get_safe_llm_params(self.model_name, self.generation_kwargs)
+        
+        out = await _safe_llm_run_with_retry(
+            self.llm,
+            prompt,
+            safe_params,
+            timeout=valves.LLM_TIMEOUT_DEFAULT,
+            max_retries=2,
+        )
+        
+        # Parse
+        result = parse_json_resilient(out.get("replies", [""])[0], mode="balanced", allow_arrays=False)
+        new_phases = result.get("additional_phases", []) if result else []
+        
+        # Validate and format (max 3 phases)
+        validated_phases = []
+        for phase in new_phases[:3]:
+            if "objective" in phase and "seed_query" in phase:
+                validated_phases.append({
+                    "objetivo": phase["objective"],
+                    "seed_query": phase["seed_query"],
+                    "must_terms": phase.get("must_terms", []),
+                    "avoid_terms": phase.get("avoid_terms", []),
+                    "phase_type": phase.get("phase_type", "research"),
+                    "expected_facts": 5,
+                    "racional": phase.get("rationale", "")
+                })
+        
+        logger.info(f"[PLANNER] Generated {len(validated_phases)} additional phases")
+        return validated_phases
+
+    def _build_additional_phases_prompt(
+        self, original_query, missing_dimensions, existing_phases, global_verdict
+    ) -> str:
+        """Build prompt for additional phase generation"""
+        
+        existing_objectives = [
+            p.get("objetivo") or p.get("objective", "")
+            for p in existing_phases
+        ]
+        
+        return f"""O contexto é INSUFICIENTE. Gere novas fases para cobrir gaps.
+
+QUERY ORIGINAL:
+{original_query}
+
+FASES JÁ EXECUTADAS:
+{chr(10).join(f"{i+1}. {obj}" for i, obj in enumerate(existing_objectives))}
+
+DIMENSÕES FALTANTES:
+{chr(10).join(f"- {dim}" for dim in missing_dimensions)}
+
+COMPLETENESS ATUAL: {global_verdict.get('completeness', 0.0):.2f}
+
+Gere até 3 NOVAS FASES específicas para cobrir gaps.
+
+Retorne JSON:
+{{
+    "additional_phases": [
+        {{
+            "objective": "...",
+            "rationale": "...",
+            "seed_query": "...",
+            "phase_type": "research",
+            "must_terms": [],
+            "avoid_terms": []
+        }}
+    ]
+}}"""
+
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
 # ============================================================================
@@ -6366,6 +6665,10 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     builder.add_node("human_feedback", human_feedback_node)
     builder.add_node("reporter", lambda s: reporter_node(s, valves))
     
+    # ===== HAS-ENOUGH-CONTEXT NODES =====
+    builder.add_node("global_check", lambda s: global_completeness_check_node(s, valves))
+    builder.add_node("generate_phases", lambda s: generate_phases_node(s, valves, PlannerLLM(valves)))
+    
     # ===== ENTRY POINT =====
     from langgraph.graph import START
     builder.add_edge(START, "coordinator")
@@ -6394,9 +6697,11 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     # ===== ROTEAMENTO DINÃ‚MICO DO JUDGE =====
     builder.add_conditional_edges(
         "judge",
-        lambda state: state.get("goto", "reporter"),
+        should_continue_research_v3,  # V3 router with completeness gates
         {
-            "researcher": "researcher",        # Continue pesquisando
+            "discovery": "researcher",
+            "next_phase": "researcher",
+            "global_check": "global_check",
             "human_feedback": "human_feedback",
             "reporter": "reporter",
             END: END
@@ -6405,6 +6710,18 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     
     # ===== FLUXO DO HUMAN FEEDBACK =====
     builder.add_edge("human_feedback", "researcher")
+    
+    # ===== HAS-ENOUGH-CONTEXT FLOW =====
+    builder.add_conditional_edges(
+        "global_check",
+        lambda state: "generate_phases" if state.get("needs_additional_phases") else "reporter",
+        {
+            "generate_phases": "generate_phases",
+            "reporter": "reporter"
+        }
+    )
+    
+    builder.add_edge("generate_phases", "researcher")
     
     # ===== FLUXO DO REPORTER =====
     builder.add_edge("reporter", END)

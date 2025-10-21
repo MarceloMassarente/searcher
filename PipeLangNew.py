@@ -289,9 +289,81 @@ def telemetry_sink(state: dict, event: str, data: dict, usage: dict = None) -> N
         except Exception as e:
             logger.warning(f"[telemetry_sink] Event emitter failed: {e}")
 
+# ===== STATE VALIDATION LAYER =====
+
+def validate_research_state(state: dict, correlation_id: str = "unknown") -> tuple[bool, list[str]]:
+    """
+    Valida state antes de passar para router/nodes
+    
+    Returns:
+        (is_valid, errors): Tuple com flag de validade e lista de erros
+    """
+    errors = []
+    
+    # Validar tipos obrigatórios
+    if 'loop_count' in state and not isinstance(state.get('loop_count'), int):
+        errors.append("loop_count must be int")
+    
+    if 'discoveries' in state and not isinstance(state.get('discoveries'), list):
+        errors.append("discoveries must be list")
+    
+    if 'facts' in state and not isinstance(state.get('facts'), list):
+        errors.append("facts must be list")
+    
+    # Validar verdict
+    valid_verdicts = ['done', 'refine', 'new_phase', 'continue', 'human_feedback', 'pivot']
+    verdict = state.get('verdict')
+    if verdict and verdict not in valid_verdicts:
+        errors.append(f"Invalid verdict: {verdict} (must be one of {valid_verdicts})")
+    
+    # Validar goto
+    valid_gotos = ['coordinator', 'planner', 'researcher', 'analyst', 'judge', 'human_feedback', 'reporter', 'END']
+    goto = state.get('goto')
+    if goto and goto not in valid_gotos:
+        errors.append(f"Invalid goto: {goto} (must be one of {valid_gotos})")
+    
+    if errors:
+        logger.error(f"[STATE_VALIDATION][{correlation_id}] Validation failed: {errors}")
+    
+    return (len(errors) == 0, errors)
+
+# ===== END STATE VALIDATION LAYER =====
+
 def should_continue_research_v2(state: dict) -> str:
-    """Enhanced router with Policy-based decisions"""
+    """Enhanced router with Policy-based decisions and state validation"""
     correlation_id = state.get('correlation_id', 'unknown')
+    
+    # Validar state antes de processar
+    is_valid, errors = validate_research_state(state, correlation_id)
+    if not is_valid:
+        logger.error(f"[ROUTER_V2][{correlation_id}] Invalid state: {errors}")
+        return "END"
+    
+    # ===== SEMANTIC LOOP DETECTION =====
+    import hashlib
+    import json
+    
+    # Hash do state relevante (excluir campos que mudam sempre)
+    state_snapshot = {
+        'verdict': state.get('verdict'),
+        'query': state.get('current_query', ''),
+        'phase_id': state.get('current_phase_id', ''),
+        'facts_count': len(state.get('facts', [])),
+        'discoveries_count': len(state.get('discoveries', []))
+    }
+    
+    state_hash = hashlib.md5(
+        json.dumps(state_snapshot, sort_keys=True).encode()
+    ).hexdigest()
+    
+    prev_hash = state.get('_prev_state_hash', '')
+    
+    if state_hash == prev_hash:
+        logger.error(f"[ROUTER_V2][{correlation_id}] Semantic loop detected (identical state)")
+        return "END"
+    
+    state['_prev_state_hash'] = state_hash
+    # ===== END SEMANTIC LOOP DETECTION =====
     
     # Get policy from state or use defaults
     policy = state.get('policy', {})
@@ -330,7 +402,19 @@ def should_continue_research_v2(state: dict) -> str:
     
     # Priority 4: Flat streak exceeded (NEW)
     if flat_streak >= flat_streak_max:
-        logger.warning(f"[ROUTER_V2][{correlation_id}] Flat streak exceeded ({flat_streak}/{flat_streak_max})")
+        logger.warning(
+            f"[ROUTER_V2][{correlation_id}] Flat streak exceeded: "
+            f"{flat_streak}/{flat_streak_max} "
+            f"(no progress in last {flat_streak} loops)"
+        )
+        
+        # Telemetria para monitoring
+        telemetry_sink(state, "flat_streak_triggered", {
+            "flat_streak": flat_streak,
+            "flat_streak_max": flat_streak_max,
+            "telemetry_loops_count": len(state.get('telemetry_loops', []))
+        })
+        
         return "END"
     
     # Priority 5: Diminishing returns (enhanced with Policy)
@@ -514,7 +598,28 @@ def telemetry_sink_node(state: dict) -> dict:
 # ============ P0-1: TF-IDF SIMILARITY HELPER ============
 
 def _calculate_similarity_tfidf(text1: str, text2: str, fallback_threshold: float = 0.5) -> float:
-    """Calculate text similarity using TF-IDF + cosine (fallback to SequenceMatcher)"""
+    """Calculate text similarity with MinHash fallback for short texts"""
+    
+    # Se textos muito curtos, usar MinHash
+    if len(text1.split()) < 10 or len(text2.split()) < 10:
+        try:
+            from datasketch import MinHash
+            
+            m1 = MinHash(num_perm=128)
+            m2 = MinHash(num_perm=128)
+            
+            for word in text1.split():
+                m1.update(word.encode('utf8'))
+            for word in text2.split():
+                m2.update(word.encode('utf8'))
+            
+            return m1.jaccard(m2)
+            
+        except Exception as e:
+            logger.warning(f"[SIMILARITY] MinHash fallback failed: {e}")
+            # Continue para TF-IDF
+    
+    # TF-IDF para textos normais
     try:
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.metrics.pairwise import cosine_similarity
@@ -529,7 +634,7 @@ def _calculate_similarity_tfidf(text1: str, text2: str, fallback_threshold: floa
         return float(similarity)
         
     except Exception:
-        # Fallback to SequenceMatcher
+        # Fallback final: SequenceMatcher
         from difflib import SequenceMatcher
         return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
 
@@ -628,6 +733,15 @@ def coordinator_node(state: ResearchState) -> ResearchState:
     # Query vaga
     if len(query.split()) < 5:
         logger.info(f"[COORDINATOR][{correlation_id}] Query vaga detectada: '{query}'")
+        
+        # Telemetria granular
+        telemetry_sink(state, "coordinator_complete", {
+            "query_type": "vague",
+            "query_length": len(query.split()),
+            "needs_clarification": True,
+            "success": True
+        })
+        
         return {
             **state,
             "goto": "coordinator",
@@ -638,6 +752,15 @@ def coordinator_node(state: ResearchState) -> ResearchState:
     # Pesquisa comparativa
     elif "comparar" in query.lower() or "vs" in query.lower():
         logger.info(f"[COORDINATOR][{correlation_id}] Pesquisa comparativa detectada: '{query}'")
+        
+        # Telemetria granular
+        telemetry_sink(state, "coordinator_complete", {
+            "query_type": "comparative",
+            "query_length": len(query.split()),
+            "needs_clarification": False,
+            "success": True
+        })
+        
         return {
             **state,
             "goto": "planner",
@@ -648,6 +771,15 @@ def coordinator_node(state: ResearchState) -> ResearchState:
     # Pesquisa padrão
     else:
         logger.info(f"[COORDINATOR][{correlation_id}] Pesquisa padrão detectada: '{query}'")
+        
+        # Telemetria granular
+        telemetry_sink(state, "coordinator_complete", {
+            "query_type": "standard",
+            "query_length": len(query.split()),
+            "needs_clarification": False,
+            "success": True
+        })
+        
         return {
             **state,
             "goto": "researcher",
@@ -732,6 +864,13 @@ async def researcher_node(
         
         logger.info(f"[RESEARCHER][{correlation_id}] Scraped: {len(scraped)} páginas")
         
+        # Telemetria granular
+        telemetry_sink(state, "researcher_complete", {
+            "discoveries_count": len(urls),
+            "scraped_count": len(scraped),
+            "success": True
+        })
+        
         return {
             **state,
             "discoveries": discoveries.get("candidates", []),
@@ -746,6 +885,13 @@ async def researcher_node(
         
     except Exception as e:
         logger.error(f"[RESEARCHER][{correlation_id}] Erro na coleta: {e}")
+        
+        # Telemetria granular para erro
+        telemetry_sink(state, "researcher_error", {
+            "error": str(e),
+            "success": False
+        })
+        
         return {
             **state,
             "goto": "analyst",  # Continuar mesmo com erro
@@ -801,6 +947,13 @@ async def analyst_node(state: ResearchState, valves) -> ResearchState:
         
         logger.info(f"[ANALYST][{correlation_id}] Extraiu {len(facts)} fatos")
         
+        # Telemetria granular
+        telemetry_sink(state, "analyst_complete", {
+            "facts_count": len(facts),
+            "scraped_docs_count": len(scraped),
+            "success": True
+        })
+        
         return {
             **state,
             "facts": facts,
@@ -811,6 +964,13 @@ async def analyst_node(state: ResearchState, valves) -> ResearchState:
         
     except Exception as e:
         logger.error(f"[ANALYST][{correlation_id}] Erro na análise: {e}")
+        
+        # Telemetria granular para erro
+        telemetry_sink(state, "analyst_error", {
+            "error": str(e),
+            "success": False
+        })
+        
         return {
             **state,
             "facts": [],
@@ -859,6 +1019,15 @@ async def judge_node(state: ResearchState, valves) -> ResearchState:
         
         logger.info(f"[JUDGE][{correlation_id}] Decisão: {verdict} → {goto}")
         
+        # Telemetria granular
+        telemetry_sink(state, "judge_complete", {
+            "verdict": verdict,
+            "facts_count": len(facts),
+            "current_phase": current_phase,
+            "total_phases": total_phases,
+            "success": True
+        })
+        
         return {
             **state,
             "verdict": verdict,
@@ -870,6 +1039,13 @@ async def judge_node(state: ResearchState, valves) -> ResearchState:
         
     except Exception as e:
         logger.error(f"[JUDGE][{correlation_id}] Erro na decisão: {e}")
+        
+        # Telemetria granular para erro
+        telemetry_sink(state, "judge_error", {
+            "error": str(e),
+            "success": False
+        })
+        
         return {
             **state,
             "verdict": "done",
@@ -903,7 +1079,7 @@ async def human_feedback_node(state: ResearchState) -> ResearchState:
     return {
         **state,
         "goto": "researcher",
-        "current_agent": AgentType.REPORTER,  # Fix: should be human_feedback
+        "current_agent": AgentType.HUMAN_FEEDBACK,  # ✅ FIX (was REPORTER)
         "messages": ["👤 Continuando após feedback..."]
     }
 
@@ -931,6 +1107,13 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
         
         logger.info(f"[REPORTER][{correlation_id}] Relatório gerado: {len(report)} chars")
         
+        # Telemetria granular
+        telemetry_sink(state, "reporter_complete", {
+            "facts_count": len(facts),
+            "report_length": len(report),
+            "success": True
+        })
+        
         return {
             **state,
             "final_report": report,
@@ -941,6 +1124,13 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
         
     except Exception as e:
         logger.error(f"[REPORTER][{correlation_id}] Erro ao gerar relatório: {e}")
+        
+        # Telemetria granular para erro
+        telemetry_sink(state, "reporter_error", {
+            "error": str(e),
+            "success": False
+        })
+        
         return {
             **state,
             "final_report": f"Erro ao gerar relatório: {str(e)[:100]}",
@@ -1081,6 +1271,64 @@ def test_router_v2_decisions():
     assert result == "discovery", f"Expected 'discovery' to continue, got {result}"
     
     print("✅ Router v2 tests passed: All decision paths working correctly")
+
+def test_semantic_loop_detection():
+    """Test semantic loop detection prevents infinite loops"""
+    print("🧪 Testing Semantic Loop Detection")
+    
+    # Simular state idêntico
+    state = {
+        'correlation_id': 'test_loop',
+        'verdict': 'continue',
+        'facts': [{"text": "fact1"}],
+        'discoveries': [{"url": "url1"}],
+        'loop_count': 1
+    }
+    
+    # Primeira chamada - deve continuar
+    result1 = should_continue_research_v2(state)
+    assert result1 == "discovery", f"Expected discovery, got {result1}"
+    
+    # Segunda chamada com mesmo state - deve detectar loop
+    result2 = should_continue_research_v2(state)
+    assert result2 == "END", f"Expected END (loop detected), got {result2}"
+    
+    print("✅ Semantic loop detection working correctly")
+
+def test_state_validation():
+    """Test state validation catches invalid states"""
+    print("🧪 Testing State Validation")
+    
+    # State válido
+    valid_state = {
+        'loop_count': 1,
+        'discoveries': [],
+        'facts': [],
+        'verdict': 'continue',
+        'goto': 'researcher'
+    }
+    is_valid, errors = validate_research_state(valid_state)
+    assert is_valid, f"Expected valid, got errors: {errors}"
+    
+    # State inválido - loop_count não é int
+    invalid_state1 = {
+        'loop_count': "1",  # String em vez de int
+        'discoveries': [],
+        'facts': []
+    }
+    is_valid, errors = validate_research_state(invalid_state1)
+    assert not is_valid, "Expected invalid for loop_count as string"
+    assert "loop_count must be int" in errors
+    
+    # State inválido - verdict inválido
+    invalid_state2 = {
+        'loop_count': 1,
+        'verdict': 'invalid_verdict'
+    }
+    is_valid, errors = validate_research_state(invalid_state2)
+    assert not is_valid, "Expected invalid for bad verdict"
+    
+    print("✅ State validation working correctly")
 
 def test_tfidf_similarity():
     """Test TF-IDF similarity calculation"""
@@ -1261,6 +1509,10 @@ def run_langgraph_tests():
         test_tfidf_similarity()
         test_telemetry_with_usage()
         test_router_flat_streak()
+        
+        # P0 + P1 Critical Fixes tests
+        test_semantic_loop_detection()
+        test_state_validation()
         
         # Multi-agent tests
         test_coordinator_routing()
@@ -7498,6 +7750,23 @@ class Pipe:
         # Check if LangGraph is available and user wants to use it
         use_langgraph = getattr(self.valves, 'USE_LANGGRAPH', False) and LANGGRAPH_AVAILABLE
         
+        # ===== LANGGRAPH FALLBACK DIAGNOSIS =====
+        if not LANGGRAPH_AVAILABLE and getattr(self.valves, 'USE_LANGGRAPH', False):
+            yield f"**[ERRO]** LangGraph solicitado mas não disponível\n"
+            
+            # Diagnóstico automático
+            try:
+                import langgraph
+                version = getattr(langgraph, '__version__', 'unknown')
+                yield f"- ✅ langgraph instalado: versão {version}\n"
+                yield f"- ⚠️ Mas import falhou. Verifique dependências.\n"
+            except ImportError as e:
+                yield f"- ❌ langgraph não instalado ou import falhou: {e}\n"
+                yield f"\n**[FIX]** Execute: `pip install langgraph>=0.3.5 --upgrade`\n"
+            
+            yield f"**[FALLBACK]** Usando modo imperative tradicional...\n"
+        # ===== END LANGGRAPH FALLBACK DIAGNOSIS =====
+        
         if use_langgraph:
             try:
                 yield f"**[MULTI-AGENT]** Using Multi-Agent LangGraph workflow\n"
@@ -7904,6 +8173,18 @@ class Pipe:
                     # Process result
                     verdict = final_state.get("verdict", "done")
                     loop_count = final_state.get("loop_count", 0)
+                    
+                    # ===== PHASE STATE MUTATION VALIDATION =====
+                    required_fields = ["verdict", "loop_count", "discoveries", "facts"]
+                    missing = [f for f in required_fields if f not in final_state]
+                    
+                    if missing:
+                        logger.error(f"[PHASE][{correlation_id}] Missing fields in final_state: {missing}")
+                        yield f"**[ERRO]** State corruption detected: missing {missing}\n"
+                        yield f"**[AÇÃO]** Parando execução para evitar crashes\n"
+                        break  # Parar execução de fases
+                    
+                    # ===== END PHASE STATE MUTATION VALIDATION =====
                     
                     yield f"**[FASE {phase_index}]** Verdict: {verdict} (loops: {loop_count})\n"
                     yield f"**[FASE {phase_index}]** Duração: {phase_duration:.1f}s\n"

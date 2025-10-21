@@ -3673,6 +3673,7 @@ class AsyncOpenAIClient:
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.model_name = model  # ✅ FIX: Expor como atributo público
         self.valves = valves  # Store valves for timeout configuration
         self._client = None  # Lazy initialization
 
@@ -10171,7 +10172,8 @@ SCHEMA JSON:
                 logger.warning("[_detect_unified_context] LLM nÃ£o disponÃ­vel")
                 return self._fallback_context(user_query)
             
-            model_name = getattr(self.valves, "LLM_MODEL", "gpt-4o")
+            # ✅ FIX: Guard contra ausência de model_name
+            model_name = getattr(llm, 'model_name', None) or getattr(llm, 'model', 'gpt-4o')
             safe_params = get_safe_llm_params(model_name, {"temperature": 0.2})
             result = await _safe_llm_run_with_retry(
                 llm, detect_prompt, safe_params, timeout=60, max_retries=2

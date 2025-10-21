@@ -7034,30 +7034,66 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     
     builder = StateGraph(ResearchState)
     
+    # ✅ DEBUG: Log de construção
+    logger.info("[LangGraph] Building graph...")
+    
     # ===== ASYNC WRAPPERS FOR LANGGRAPH =====
     async def ctx_node(state):
-        return context_detection_node(state, pipe_instance)
+        result = context_detection_node(state, pipe_instance)
+        # ✅ VALIDAÇÃO: Garantir que retorno é dict
+        if not isinstance(result, dict):
+            logger.error(f"[CTX_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "coordinator"}
+        return result
     
     async def planner_node_wrapper(state):
-        return planner_node(state, valves)
+        result = planner_node(state, valves)
+        if not isinstance(result, dict):
+            logger.error(f"[PLANNER_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "researcher"}
+        return result
     
     async def researcher_node_wrapper(state):
-        return researcher_node(state, discovery_tool, scraper_tool)
+        result = researcher_node(state, discovery_tool, scraper_tool)
+        if not isinstance(result, dict):
+            logger.error(f"[RESEARCHER_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "analyst"}
+        return result
     
     async def analyst_node_wrapper(state):
-        return analyst_node(state, valves)
+        result = analyst_node(state, valves)
+        if not isinstance(result, dict):
+            logger.error(f"[ANALYST_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "judge"}
+        return result
     
     async def judge_node_wrapper(state):
-        return judge_node(state, valves)
+        result = judge_node(state, valves)
+        if not isinstance(result, dict):
+            logger.error(f"[JUDGE_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "reporter"}
+        return result
     
     async def reporter_node_wrapper(state):
-        return reporter_node(state, valves)
+        result = reporter_node(state, valves)
+        if not isinstance(result, dict):
+            logger.error(f"[REPORTER_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "END"}
+        return result
     
     async def global_check_wrapper(state):
-        return global_completeness_check_node(state, valves)
+        result = global_completeness_check_node(state, valves)
+        if not isinstance(result, dict):
+            logger.error(f"[GLOBAL_CHECK_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "reporter"}
+        return result
     
     async def generate_phases_wrapper(state):
-        return generate_phases_node(state, valves, PlannerLLM(valves))
+        result = generate_phases_node(state, valves, PlannerLLM(valves))
+        if not isinstance(result, dict):
+            logger.error(f"[GENERATE_PHASES_NODE] Invalid return type: {type(result)} - {result}")
+            return {"error": "Invalid node return", "goto": "researcher"}
+        return result
     
     # ===== ADICIONAR AGENTES =====
     builder.add_node("context_detection", ctx_node)
@@ -7139,7 +7175,14 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     # ✅ FIX: Configurar recursion_limit maior para permitir clarificações
     config = {"recursion_limit": 50}  # Aumentado: 25 → 50 (default → 2x)
     
-    return builder.compile(checkpointer=memory, config=config)
+    try:
+        logger.info("[LangGraph] Compiling graph...")
+        graph = builder.compile(checkpointer=memory, config=config)
+        logger.info("[LangGraph] Graph compiled successfully")
+        return graph
+    except Exception as e:
+        logger.error(f"[LangGraph] Graph build failed: {e}")
+        return None
 
 def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
     """Legacy: Builds and compiles the research LangGraph workflow with Guard Nodes."""
@@ -8736,6 +8779,17 @@ class Pipe:
                         yield f"**[MULTI-AGENT]** Falling back to imperative mode\n"
                         use_langgraph = False
                 else:
+                    # ✅ DEBUG: Verificar disponibilidade do LangGraph
+                    logger.info(f"[PIPE] LANGGRAPH_AVAILABLE: {LANGGRAPH_AVAILABLE}")
+                    logger.info(f"[PIPE] USE_LANGGRAPH valve: {getattr(self.valves, 'USE_LANGGRAPH', False)}")
+                    
+                    if LANGGRAPH_AVAILABLE:
+                        try:
+                            from langgraph.graph import StateGraph, END
+                            logger.info("[PIPE] StateGraph import: OK")
+                        except Exception as e:
+                            logger.error(f"[PIPE] StateGraph import: FAILED - {e}")
+                    
                     # Build Multi-Agent LangGraph workflow
                     graph = build_multi_agent_graph(self.valves, d_callable, s_callable, cr_callable, self)
                     if not graph:

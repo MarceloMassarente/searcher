@@ -30,61 +30,77 @@ O PipeLangNew é um sistema de pesquisa inteligente que utiliza múltiplos agent
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   COORDENADOR   │───▶│     PLANNER     │───▶│   RESEARCHER    │
+│ CONTEXT_DETECT  │───▶│   COORDENADOR   │───▶│     PLANNER     │
 │                 │    │                 │    │                 │
-│ • Analisa query │    │ • Cria plano    │    │ • Descobre URLs │
-│ • Roteia fluxo  │    │ • Define fases  │    │ • Scraping      │
+│ • Detecta setor │    │ • Analisa query │    │ • Cria plano    │
+│ • Tipo pesquisa │    │ • Roteia fluxo  │    │ • Define fases  │
+│ • Perfil apropriado│  │ • Usa contexto │    │ • Personalizado │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│     ANALYST     │───▶│      JUDGE      │───▶│   ROUTER V3     │
+│   RESEARCHER    │───▶│     ANALYST     │───▶│      JUDGE      │
 │                 │    │                 │    │                 │
-│ • Extrai fatos  │    │ • Completeness  │    │ • Decisões      │
-│ • Estrutura     │    │ • Local/Global  │    │ • Próxima ação  │
+│ • Descobre URLs │    │ • Extrai fatos  │    │ • Completeness  │
+│ • Scraping      │    │ • Estrutura     │    │ • Local/Global  │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  GLOBAL_CHECK   │───▶│ GENERATE_PHASES │───▶│    REPORTER     │
+│   ROUTER V3     │───▶│  GLOBAL_CHECK   │───▶│ GENERATE_PHASES │
 │                 │    │                 │    │                 │
-│ • Avaliação     │    │ • Cria fases    │    │ • Síntese final │
-│ • Holística     │    │ • Adicionais    │    │ • Insights      │
+│ • Decisões      │    │ • Avaliação     │    │ • Cria fases    │
+│ • Próxima ação  │    │ • Holística     │    │ • Adicionais    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│    REPORTER     │    │                 │    │                 │
+│                 │    │                 │    │                 │
+│ • Síntese final │    │                 │    │                 │
+│ • Insights      │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
 ## 🔄 Fluxo Principal
 
-### 1. **COORDENADOR** - Análise e Roteamento
+### 1. **CONTEXT_DETECTION** - Detecção de Contexto
+- Analisa a query do usuário usando LLM
+- Determina setor, tipo de pesquisa, perfil apropriado
+- Extrai key_questions e research_objectives
+- Adiciona contexto ao state para uso pelos outros agentes
+
+### 2. **COORDENADOR** - Análise e Roteamento
 - Analisa a query do usuário
 - Determina o tipo de pesquisa necessária
 - Roteia para PLANNER (pesquisas complexas) ou RESEARCHER (pesquisas diretas)
 
-### 2. **PLANNER** - Criação de Plano Estruturado
+### 3. **PLANNER** - Criação de Plano Estruturado
 - Cria plano de pesquisa com múltiplas fases
 - Define objetivos específicos para cada fase
 - Configura seed queries e must_terms
 - Estabelece janelas temporais e critérios de qualidade
+- **Usa contexto detectado** para personalizar o plano
 
-### 3. **RESEARCHER** - Descoberta e Scraping
+### 4. **RESEARCHER** - Descoberta e Scraping
 - Executa descoberta de URLs relevantes
 - Realiza scraping de conteúdo
 - Aplica filtros de qualidade e relevância
 - Coleta evidências e fontes primárias
 
-### 4. **ANALYST** - Análise e Estruturação
+### 5. **ANALYST** - Análise e Estruturação
 - Analisa conteúdo coletado
 - Extrai fatos estruturados com confiança
 - Identifica lacunas e contradições
 - Estrutura informações para análise
 
-### 5. **JUDGE** - Avaliação de Completude
+### 6. **JUDGE** - Avaliação de Completude
 - **Local Completeness**: Avalia completude por fase (threshold 0.85)
 - **Global Completeness**: Avalia completude cross-fase (threshold 0.85)
 - Combina estimativa LLM (60%) + métricas objetivas (40%)
 - Identifica dimensões faltantes e gaps
 
-### 6. **ROUTER V3** - Decisões Inteligentes
+### 7. **ROUTER V3** - Decisões Inteligentes
 - **Priority 1**: High local completeness (≥0.85) → next phase ou global check
 - **Priority 2**: Max loops → global check ou next phase
 - **Priority 3**: Done verdict com moderate completeness → global check
@@ -92,23 +108,53 @@ O PipeLangNew é um sistema de pesquisa inteligente que utiliza múltiplos agent
 - **Priority 5**: Flat streak → global check
 - **Priority 6**: Semantic loop detection → global check
 
-### 7. **GLOBAL_CHECK** - Avaliação Holística
+### 8. **GLOBAL_CHECK** - Avaliação Holística
 - Avalia completude acumulada de todas as fases
 - Identifica dimensões faltantes
 - Determina se pesquisa está completa
 - Sugere fases adicionais se necessário
 
-### 8. **GENERATE_PHASES** - Geração Dinâmica
+### 9. **GENERATE_PHASES** - Geração Dinâmica
 - Cria até 3 fases adicionais quando global < 0.85
 - Foca em dimensões identificadas como faltantes
 - Mantém consistência com plano original
 - Valida estrutura das novas fases
 
-### 9. **REPORTER** - Síntese Final
+### 10. **REPORTER** - Síntese Final
 - Consolida todas as informações coletadas
 - Gera insights e recomendações
 - Estrutura relatório final
 - Exporta resultados em múltiplos formatos
+
+## 🔍 Context Detection
+
+### Detecção Inteligente de Contexto
+O sistema implementa um nó de context detection que analisa a query do usuário antes de qualquer processamento:
+
+```python
+detected_context = {
+    'setor_principal': 'tecnologia',
+    'tipo_pesquisa': 'mercado', 
+    'perfil_sugerido': 'company_profile',
+    'key_questions': ['Quais são as principais tendências?', 'Quem são os players?'],
+    'research_objectives': ['Mapear mercado', 'Identificar oportunidades'],
+    'detecção_confianca': 0.85,
+    'fonte_deteccao': 'llm'
+}
+```
+
+### Prompt Sofisticado
+- **Análise de Setor**: Identifica setor específico (não "geral")
+- **Tipo de Pesquisa**: Acadêmica, mercado, técnica, regulatória, notícias
+- **Perfil Apropriado**: company_profile, regulation_review, technical_spec, etc.
+- **Key Questions**: 5-10 perguntas de decisão
+- **Research Objectives**: 3-5 objetivos específicos
+
+### Integração com LangGraph
+- **Primeiro Nó**: Context detection roda antes de todos os outros
+- **State Sharing**: Contexto é compartilhado via ResearchState
+- **Personalização**: Planner usa contexto para personalizar planos
+- **Fallback Robusto**: Sistema funciona mesmo se detecção falhar
 
 ## 🧠 Has-Enough-Context Mechanism
 

@@ -11,19 +11,19 @@ description: LangGraph-based research orchestration pipeline for company profile
 
 #!/usr/bin/env python3
 """
-PipeHaystack_LangGraph v3.0 - OrquestraÃ§Ã£o 100% LangGraph
+PipeHaystack_LangGraph v3.0 - Orquestração 100% LangGraph
 
 FILOSOFIA:
-- LangGraph gerencia ITERAÃ‡Ã•ES (discovery â†’ scrape â†’ reduce â†’ analyze â†’ judge)
+- LangGraph gerencia ITERAÇÕES (discovery → scrape → reduce → analyze → judge)
 - Pipe gerencia apenas CICLO DE FASES (criar novas fases quando Judge decide)
-- NÃ³s sÃ£o WRAPPERS FINOS que delegam para cÃ³digo existente
-- Router Ã© PURO (decisÃ£o baseada apenas em state, sem side-effects)
+- Nós são WRAPPERS FINOS que delegam para código existente
+- Router é PURO (decisão baseada apenas em state, sem side-effects)
 
 ESTRUTURA:
 1. State TypedDict: Estado COMPLETO da pesquisa (todos os campos do Orchestrator)
-2. NÃ³s LangGraph: Wrappers para discovery, scrape, reduce, analyze, judge
-3. Router: DecisÃ£o pura baseada em state (done/refine/new_phase)
-4. Pipe: Wrapper OpenWebUI (gerencia fases, nÃ£o loops)
+2. Nós LangGraph: Wrappers para discovery, scrape, reduce, analyze, judge
+3. Router: Decisão pura baseada em state (done/refine/new_phase)
+4. Pipe: Wrapper OpenWebUI (gerencia fases, não loops)
 """
 
 import asyncio
@@ -167,7 +167,7 @@ class AgentType(str, Enum):
 class ResearchState(TypedDict, total=False):
     """Estado compartilhado entre agentes multi-agente"""
     # Controle de fluxo
-    goto: str                           # PrÃ³ximo agente (coordinator decide)
+    goto: str                           # Próximo agente (coordinator decide)
     current_agent: AgentType            # Agente atual
     
     # Input original
@@ -183,7 +183,7 @@ class ResearchState(TypedDict, total=False):
     scraped_content: List[Dict]
     facts: List[Dict]
     
-    # DecisÃµes
+    # Decisões
     verdict: Literal["continue", "done", "pivot", "human_feedback"]
     reasoning: str
     
@@ -489,7 +489,7 @@ def guard_redundant_refine_node(state: dict) -> dict:
                 
                 # Force DONE instead of spinning with duplicate query
                 state['verdict'] = "done"
-                state['reasoning'] = f"[AUTO-CORREÃ‡ÃƒO] Query proposta muito similar Ã  anterior ({similarity:.0%}). Parando para evitar repetiÃ§Ã£o inÃºtil."
+                state['reasoning'] = f"[AUTO-CORREÇÃO] Query proposta muito similar à anterior ({similarity:.0%}). Parando para evitar repetição inútil."
                 state['next_query'] = ""
                 
                 # Add to modifications
@@ -536,11 +536,11 @@ def seed_rotation_node(state: dict) -> dict:
                 
                 # Update reasoning to document rotation
                 if "reasoning" in new_phase:
-                    new_phase["reasoning"] += f" MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                    new_phase["reasoning"] += f" Mudança de família: {current_family} → {new_family}"
                 else:
-                    new_phase["reasoning"] = f"MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                    new_phase["reasoning"] = f"Mudança de família: {current_family} → {new_family}"
             
-            logger.info(f"[SEED_ROTATION][{correlation_id}] RotaÃ§Ã£o de famÃ­lia: {current_family} â†’ {new_family} (loop {loop_number})")
+            logger.info(f"[SEED_ROTATION][{correlation_id}] Rotação de família: {current_family} → {new_family} (loop {loop_number})")
     
     return state
 
@@ -688,7 +688,7 @@ def coordinator_node(state: ResearchState) -> ResearchState:
     """
     COORDINATOR: Router inteligente
     - Classificar tipo de pesquisa
-    - Detectar queries vagas (precisa clarificaÃ§Ã£o)
+    - Detectar queries vagas (precisa clarificação)
     - Rotear para agente apropriado
     """
     query = state.get("user_query", "")
@@ -753,7 +753,7 @@ def coordinator_node(state: ResearchState) -> ResearchState:
 
 async def planner_node(state: ResearchState, valves) -> ResearchState:
     """
-    PLANNER: DecomposiÃ§Ã£o de tarefas
+    PLANNER: Decomposição de tarefas
     - Criar plano multi-fase
     - Definir objectives por fase
     """
@@ -764,11 +764,11 @@ async def planner_node(state: ResearchState, valves) -> ResearchState:
     
     # Chamar Planner LLM (reusa cÃ³digo existente)
     try:
-        # Simular plano para demonstraÃ§Ã£o
+        # Simular plano para demonstração
         plan = {
             "phases": [
                 {
-                    "objective": f"Pesquisar informaÃ§Ãµes bÃ¡sicas sobre {query}",
+                    "objective": f"Pesquisar informações básicas sobre {query}",
                     "key_terms": query.split()[:3],
                     "seed_family": "entity-centric"
                 },
@@ -5665,9 +5665,9 @@ class JudgeLLM:
                     
                     # Update reasoning to document rotation
                     if "reasoning" in new_phase:
-                        new_phase["reasoning"] += f" MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                        new_phase["reasoning"] += f" Mudança de família: {current_family} → {new_family}"
                     else:
-                        new_phase["reasoning"] = f"MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                        new_phase["reasoning"] = f"Mudança de família: {current_family} → {new_family}"
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     logger.info(f"[JUDGE] RotaÃ§Ã£o de famÃ­lia: {current_family} â†’ {new_family} (loop {loop_number})")

@@ -194,7 +194,7 @@ class ResearchState(TypedDict, total=False):
     detected_context: Optional[Dict[str, Any]]
     needs_clarification: bool
     
-    # SÃ­ntese final
+    # Síntese final
     final_report: Optional[str]
     
     # Telemetria
@@ -8500,37 +8500,81 @@ class Pipe:
         
         logger.info("[PIPE] Pipe inicializado")
 
-    def _initialize_tools(self):
-        """Initialize tools for LangGraph workflow"""
-        if self.discovery_tool is None:
-            try:
-                # Import and initialize discovery tool
-                from tool_discovery import discovery_tool
-                self.discovery_tool = discovery_tool
-                logger.info("[PIPE] Discovery tool initialized")
-            except ImportError as e:
-                logger.warning(f"[PIPE] Discovery tool not available: {e}")
-                self.discovery_tool = None
+    def _resolve_tools(self, __tools__: Dict[str, Dict[str, Any]]):
+        """Resolve tools using deterministic heuristics (from PipeHaystack)"""
+        if not __tools__:
+            logger.warning("[PIPE] No tools available, using mock tools")
+            # Create mock tools for testing
+            def mock_discovery_tool(query, return_dict=True):
+                return {"urls": [f"http://mock-{i}.com" for i in range(5)], "candidates": []}
+            
+            def mock_scraper_tool(url):
+                return {"content": f"Mock content from {url}", "title": f"Mock title from {url}"}
+            
+            def mock_context_reducer_tool(**kwargs):
+                return {"final_markdown": "Mock context reduction result"}
+            
+            return mock_discovery_tool, mock_scraper_tool, mock_context_reducer_tool
+
+        keys = list(__tools__.keys())
+        logger.debug("Available tools: %s", keys)
+
+        # Resolução determinística: nome exato > prefixo > substring
+        discover_key = self._resolve_tool_deterministic(
+            "discovery", keys, ["discover", "search"]
+        )
+        scrape_key = self._resolve_tool_deterministic(
+            "scraper", keys, ["scrape", "scraper"]
+        )
+        context_reducer_key = self._resolve_tool_deterministic(
+            "context_reducer", keys, ["reduce", "context"]
+        )
+
+        # Check if we found the required tools
+        if not discover_key:
+            logger.warning(f"Discovery tool not found. Available tools: {keys}")
+            discover_key = None
+        if not scrape_key:
+            logger.warning(f"Scraper tool not found. Available tools: {keys}")
+            scrape_key = None
+
+        logger.debug("Using discovery tool: %s", discover_key)
+        logger.debug("Using scraper tool: %s", scrape_key)
+        if context_reducer_key:
+            logger.debug("Using context reducer tool: %s", context_reducer_key)
+
+        # Get the callables
+        d_callable = __tools__[discover_key]["callable"] if discover_key else None
+        s_callable = __tools__[scrape_key]["callable"] if scrape_key else None
+        cr_callable = (
+            __tools__[context_reducer_key]["callable"] if context_reducer_key else None
+        )
+
+        return d_callable, s_callable, cr_callable
+
+    def _resolve_tool_deterministic(self, tool_type: str, available_keys: List[str], fallback_hints: List[str] = None) -> Optional[str]:
+        """Resolve tool using deterministic heuristics"""
+        if not available_keys:
+            return None
         
-        if self.scraper_tool is None:
-            try:
-                # Import and initialize scraper tool
-                from tool_content_scraperv5_production_grade_clean import scraper_tool
-                self.scraper_tool = scraper_tool
-                logger.info("[PIPE] Scraper tool initialized")
-            except ImportError as e:
-                logger.warning(f"[PIPE] Scraper tool not available: {e}")
-                self.scraper_tool = None
+        # 1) Exact match
+        for key in available_keys:
+            if key.lower() == tool_type.lower():
+                return key
         
-        if self.context_reducer_tool is None:
-            try:
-                # Import and initialize context reducer tool
-                from tool_reduce_context_from_scraper_fixed import context_reducer_tool
-                self.context_reducer_tool = context_reducer_tool
-                logger.info("[PIPE] Context reducer tool initialized")
-            except ImportError as e:
-                logger.warning(f"[PIPE] Context reducer tool not available: {e}")
-                self.context_reducer_tool = None
+        # 2) Contains match
+        for key in available_keys:
+            if tool_type.lower() in key.lower():
+                return key
+        
+        # 3) Fallback hints
+        if fallback_hints:
+            for hint in fallback_hints:
+                for key in available_keys:
+                    if hint.lower() in key.lower():
+                        return key
+
+        return None
 
     async def health_check(self) -> Dict[str, Any]:
         """Health check bÃ¡sico do pipeline."""
@@ -8632,59 +8676,59 @@ class Pipe:
                 yield f"**[MULTI-AGENT]** Using Multi-Agent LangGraph workflow\n"
                 yield f"**[MULTI-AGENT]** Correlation ID: {correlation_id}\n"
                 
-                # Initialize tools for LangGraph workflow
-                self._initialize_tools()
+                # Resolve tools using OpenWebUI __tools__ parameter
+                d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
                 
                 # Check if tools are available
-                if not self.discovery_tool or not self.scraper_tool:
-                    yield f"**[MULTI-AGENT]** Error: 'Pipe' object has no attribute 'discovery_tool', falling back to imperative mode\n"
+                if not d_callable or not s_callable:
+                    yield f"**[MULTI-AGENT]** Error: Tools not available, falling back to imperative mode\n"
                     use_langgraph = False
                 else:
                     # Build Multi-Agent LangGraph workflow
-                    graph = build_multi_agent_graph(self.valves, self.discovery_tool, self.scraper_tool, self.context_reducer_tool, self)
-                if not graph:
-                    yield f"**[MULTI-AGENT]** Graph build failed, falling back to imperative mode\n"
-                    use_langgraph = False
-                else:
-                    # Initialize state for Multi-Agent LangGraph
-                    initial_state = {
-                        'user_query': last_msg,
-                        'correlation_id': correlation_id,
-                        'goto': 'context_detection',
-                        'messages': [],
-                        'discoveries': [],
-                        'scraped_content': [],
-                        'facts': [],
-                        'current_phase': 0,
-                        'total_phases': 1,
-                        'needs_clarification': False,
-                        'human_feedback': None,
-                        'detected_context': None
-                    }
-                    
-                    # Run Multi-Agent LangGraph workflow with streaming
-                    config = {"configurable": {"thread_id": correlation_id}}
-                    
-                    async for event in graph.astream_events(initial_state, config, version="v1"):
-                        event_type = event.get("event")
+                    graph = build_multi_agent_graph(self.valves, d_callable, s_callable, cr_callable, self)
+                    if not graph:
+                        yield f"**[MULTI-AGENT]** Graph build failed, falling back to imperative mode\n"
+                        use_langgraph = False
+                    else:
+                        # Initialize state for Multi-Agent LangGraph
+                        initial_state = {
+                            'user_query': last_msg,
+                            'correlation_id': correlation_id,
+                            'goto': 'context_detection',
+                            'messages': [],
+                            'discoveries': [],
+                            'scraped_content': [],
+                            'facts': [],
+                            'current_phase': 0,
+                            'total_phases': 1,
+                            'needs_clarification': False,
+                            'human_feedback': None,
+                            'detected_context': None
+                        }
                         
-                        # Stream messages from agents
-                        if event_type == "on_chain_end":
-                            node_name = event.get("name", "")
-                            output = event.get("data", {}).get("output", {})
+                        # Run Multi-Agent LangGraph workflow with streaming
+                        config = {"configurable": {"thread_id": correlation_id}}
+                        
+                        async for event in graph.astream_events(initial_state, config, version="v1"):
+                            event_type = event.get("event")
                             
-                            messages = output.get("messages", [])
-                            for msg in messages:
-                                yield f"{msg}\n"
-                    
-                    # Get final state
-                    final_state = graph.get_state(config).values
-                    report = final_state.get("final_report", "")
-                    if report:
-                        yield f"\n{report}\n"
-                    
-                    return  # Exit early if Multi-Agent LangGraph succeeded
-                    
+                            # Stream messages from agents
+                            if event_type == "on_chain_end":
+                                node_name = event.get("name", "")
+                                output = event.get("data", {}).get("output", {})
+                                
+                                messages = output.get("messages", [])
+                                for msg in messages:
+                                    yield f"{msg}\n"
+                        
+                        # Get final state
+                        final_state = graph.get_state(config).values
+                        report = final_state.get("final_report", "")
+                        if report:
+                            yield f"\n{report}\n"
+                        
+                        return  # Exit early if Multi-Agent LangGraph succeeded
+                        
             except Exception as e:
                 yield f"**[MULTI-AGENT]** Error: {e}, falling back to imperative mode\n"
                 use_langgraph = False
@@ -9156,7 +9200,7 @@ class Pipe:
             requested_phases if requested_phases else self.valves.DEFAULT_PHASE_COUNT
         )
 
-        yield f"**[PLANNER]** AtÃ© {phases} fases (conforme necessÃ¡rio)...\n\n"
+        yield f"**[PLANNER]** Até {phases} fases (conforme necessário)...\n\n"
 
         planner = PlannerLLM(self.valves)
         out = await planner.run(
@@ -9171,9 +9215,9 @@ class Pipe:
             yield "**[ERRO]** Contrato invÃ¡lido gerado pelo Planner\n"
             return
         self._last_contract = out["contract"]
-        yield "**[INFO]** âœ… Contrato gerado com sucesso\n"
+        yield "**[INFO]** ✅ Contrato gerado com sucesso\n"
         # Render contract for user
-        yield f"\nðŸ“‹ **Plano de Pesquisa**\n\n"
+        yield f"\n📋 **Plano de Pesquisa**\n\n"
         for i, phase in enumerate(out["contract"].get("fases", []), 1):
             yield f"**Fase {i}:** {phase.get('objetivo', 'N/A')}\n"
             yield f"- Query: {phase.get('query_sugerida', 'N/A')}\n"
@@ -10063,7 +10107,8 @@ SCHEMA JSON:
                 logger.warning("[_detect_unified_context] LLM nÃ£o disponÃ­vel")
                 return self._fallback_context(user_query)
             
-            safe_params = get_safe_llm_params(llm.model_name, {"temperature": 0.2})
+            model_name = getattr(self.valves, "LLM_MODEL", "gpt-4o")
+            safe_params = get_safe_llm_params(model_name, {"temperature": 0.2})
             result = await _safe_llm_run_with_retry(
                 llm, detect_prompt, safe_params, timeout=60, max_retries=2
             )

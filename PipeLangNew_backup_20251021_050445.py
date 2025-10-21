@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 title: OpenAgent Clone - LangGraph Pipeline
 author: Marcelo
@@ -11,19 +11,19 @@ description: LangGraph-based research orchestration pipeline for company profile
 
 #!/usr/bin/env python3
 """
-PipeHaystack_LangGraph v3.0 - OrquestraÃ§Ã£o 100% LangGraph
+PipeHaystack_LangGraph v3.0 - Orquestração 100% LangGraph
 
 FILOSOFIA:
-- LangGraph gerencia ITERAÃ‡Ã•ES (discovery â†’ scrape â†’ reduce â†’ analyze â†’ judge)
+- LangGraph gerencia ITERAÇÕES (discovery → scrape → reduce → analyze → judge)
 - Pipe gerencia apenas CICLO DE FASES (criar novas fases quando Judge decide)
-- NÃ³s sÃ£o WRAPPERS FINOS que delegam para cÃ³digo existente
-- Router Ã© PURO (decisÃ£o baseada apenas em state, sem side-effects)
+- Nós são WRAPPERS FINOS que delegam para código existente
+- Router é PURO (decisão baseada apenas em state, sem side-effects)
 
 ESTRUTURA:
 1. State TypedDict: Estado COMPLETO da pesquisa (todos os campos do Orchestrator)
-2. NÃ³s LangGraph: Wrappers para discovery, scrape, reduce, analyze, judge
-3. Router: DecisÃ£o pura baseada em state (done/refine/new_phase)
-4. Pipe: Wrapper OpenWebUI (gerencia fases, nÃ£o loops)
+2. Nós LangGraph: Wrappers para discovery, scrape, reduce, analyze, judge
+3. Router: Decisão pura baseada em state (done/refine/new_phase)
+4. Pipe: Wrapper OpenWebUI (gerencia fases, não loops)
 """
 
 import asyncio
@@ -167,7 +167,7 @@ class AgentType(str, Enum):
 class ResearchState(TypedDict, total=False):
     """Estado compartilhado entre agentes multi-agente"""
     # Controle de fluxo
-    goto: str                           # PrÃ³ximo agente (coordinator decide)
+    goto: str                           # Próximo agente (coordinator decide)
     current_agent: AgentType            # Agente atual
     
     # Input original
@@ -183,7 +183,7 @@ class ResearchState(TypedDict, total=False):
     scraped_content: List[Dict]
     facts: List[Dict]
     
-    # DecisÃµes
+    # Decisões
     verdict: Literal["continue", "done", "pivot", "human_feedback"]
     reasoning: str
     
@@ -191,7 +191,7 @@ class ResearchState(TypedDict, total=False):
     human_feedback: Optional[str]
     needs_clarification: bool
     
-    # SÃ­ntese final
+    # Síntese final
     final_report: Optional[str]
     
     # Telemetria
@@ -300,7 +300,7 @@ def validate_research_state(state: dict, correlation_id: str = "unknown") -> tup
     """
     errors = []
     
-    # Validar tipos obrigatÃ³rios
+    # Validar tipos obrigatórios
     if 'loop_count' in state and not isinstance(state.get('loop_count'), int):
         errors.append("loop_count must be int")
     
@@ -487,12 +487,12 @@ def guard_new_phase_node(state: dict) -> dict:
                 # Convert to REFINE and reuse seed_query
                 state['verdict'] = "refine"
                 state['next_query'] = new_phase.get("seed_query", "")
-                state['reasoning'] = f"[AUTO-CORREÃ‡ÃƒO] Fase proposta duplica '{duplicate_phase.get('name', 'fase existente')}'. Convertido para refine com query focada."
+                state['reasoning'] = f"[AUTO-CORREÇÃO] Fase proposta duplica '{duplicate_phase.get('name', 'fase existente')}'. Convertido para refine com query focada."
                 state['new_phase'] = {}  # Clear new_phase
                 
                 # Add to modifications
                 modifications = state.get('modifications', [])
-                modifications.append(f"Anti-duplicate guard: new_phase â†’ refine (similarity {max_sim_score:.2f} with '{duplicate_phase.get('name', 'N/A')}')")
+                modifications.append(f"Anti-duplicate guard: new_phase → refine (similarity {max_sim_score:.2f} with '{duplicate_phase.get('name', 'N/A')}')")
                 state['modifications'] = modifications
     
     return state
@@ -525,19 +525,19 @@ def guard_redundant_refine_node(state: dict) -> dict:
                 
                 # Force DONE instead of spinning with duplicate query
                 state['verdict'] = "done"
-                state['reasoning'] = f"[AUTO-CORREÃ‡ÃƒO] Query proposta muito similar Ã  anterior ({similarity:.0%}). Parando para evitar repetiÃ§Ã£o inÃºtil."
+                state['reasoning'] = f"[AUTO-CORREÇÃO] Query proposta muito similar à anterior ({similarity:.0%}). Parando para evitar repetição inútil."
                 state['next_query'] = ""
                 
                 # Add to modifications
                 modifications = state.get('modifications', [])
-                modifications.append(f"Anti-redundant refine: refine â†’ done (query similarity {similarity:.0%})")
+                modifications.append(f"Anti-redundant refine: refine → done (query similarity {similarity:.0%})")
                 state['modifications'] = modifications
                 break
     
     return state
 
 def seed_rotation_node(state: dict) -> dict:
-    """Guard 3: Seed family rotation on NEW_PHASE after loop â‰¥2 for orthogonal exploration"""
+    """Guard 3: Seed family rotation on NEW_PHASE after loop ≥2 for orthogonal exploration"""
     correlation_id = state.get('correlation_id', 'unknown')
     verdict = state.get('verdict', 'done')
     new_phase = state.get('new_phase')
@@ -547,7 +547,7 @@ def seed_rotation_node(state: dict) -> dict:
     if verdict == "new_phase" and new_phase:
         loop_number = len(telemetry_loops) if telemetry_loops else 0
         
-        # Rotate family only after loop â‰¥2 (third iteration)
+        # Rotate family only after loop ≥2 (third iteration)
         if loop_number >= 2:
             current_family = (
                 phase_context.get("seed_family_hint", "entity-centric")
@@ -572,11 +572,11 @@ def seed_rotation_node(state: dict) -> dict:
                 
                 # Update reasoning to document rotation
                 if "reasoning" in new_phase:
-                    new_phase["reasoning"] += f" MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                    new_phase["reasoning"] += f" Mudança de família: {current_family} → {new_family}"
                 else:
-                    new_phase["reasoning"] = f"MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                    new_phase["reasoning"] = f"Mudança de família: {current_family} → {new_family}"
             
-            logger.info(f"[SEED_ROTATION][{correlation_id}] RotaÃ§Ã£o de famÃ­lia: {current_family} â†’ {new_family} (loop {loop_number})")
+            logger.info(f"[SEED_ROTATION][{correlation_id}] Rotação de família: {current_family} → {new_family} (loop {loop_number})")
     
     return state
 
@@ -724,7 +724,7 @@ def coordinator_node(state: ResearchState) -> ResearchState:
     """
     COORDINATOR: Router inteligente
     - Classificar tipo de pesquisa
-    - Detectar queries vagas (precisa clarificaÃ§Ã£o)
+    - Detectar queries vagas (precisa clarificação)
     - Rotear para agente apropriado
     """
     query = state.get("user_query", "")
@@ -746,7 +746,7 @@ def coordinator_node(state: ResearchState) -> ResearchState:
             **state,
             "goto": "coordinator",
             "needs_clarification": True,
-            "messages": ["â“ Sua pergunta Ã© muito vaga. Pode detalhar?"]
+            "messages": ["❓ Sua pergunta é muito vaga. Pode detalhar?"]
         }
     
     # Pesquisa comparativa
@@ -765,12 +765,12 @@ def coordinator_node(state: ResearchState) -> ResearchState:
             **state,
             "goto": "planner",
             "current_agent": AgentType.COORDINATOR,
-            "messages": ["ðŸŽ¯ Detectei pesquisa comparativa. Criando plano..."]
+            "messages": ["🎯 Detectei pesquisa comparativa. Criando plano..."]
         }
     
-    # Pesquisa padrÃ£o
+    # Pesquisa padrão
     else:
-        logger.info(f"[COORDINATOR][{correlation_id}] Pesquisa padrÃ£o detectada: '{query}'")
+        logger.info(f"[COORDINATOR][{correlation_id}] Pesquisa padrão detectada: '{query}'")
         
         # Telemetria granular
         telemetry_sink(state, "coordinator_complete", {
@@ -784,12 +784,12 @@ def coordinator_node(state: ResearchState) -> ResearchState:
             **state,
             "goto": "researcher",
             "current_agent": AgentType.COORDINATOR,
-            "messages": ["ðŸ” Iniciando pesquisa..."]
+            "messages": ["🔍 Iniciando pesquisa..."]
         }
 
 async def planner_node(state: ResearchState, valves) -> ResearchState:
     """
-    PLANNER: DecomposiÃ§Ã£o de tarefas
+    PLANNER: Decomposição de tarefas
     - Criar plano multi-fase
     - Definir objectives por fase
     """
@@ -798,19 +798,19 @@ async def planner_node(state: ResearchState, valves) -> ResearchState:
     
     logger.info(f"[PLANNER][{correlation_id}] Criando plano para: '{query}'")
     
-    # Chamar Planner LLM (reusa cÃ³digo existente)
+    # Chamar Planner LLM (reusa código existente)
     try:
-        # Simular plano para demonstraÃ§Ã£o
+        # Simular plano para demonstração
         plan = {
             "phases": [
                 {
-                    "objective": f"Pesquisar informaÃ§Ãµes bÃ¡sicas sobre {query}",
+                    "objective": f"Pesquisar informações básicas sobre {query}",
                     "key_terms": query.split()[:3],
                     "seed_family": "entity-centric"
                 },
                 {
                     "objective": f"Analisar aspectos comparativos de {query}",
-                    "key_terms": ["comparar", "diferenÃ§as", "vantagens"],
+                    "key_terms": ["comparar", "diferenças", "vantagens"],
                     "seed_family": "problem-centric"
                 }
             ]
@@ -825,7 +825,7 @@ async def planner_node(state: ResearchState, valves) -> ResearchState:
             "current_phase": 0,
             "goto": "researcher",
             "current_agent": AgentType.PLANNER,
-            "messages": [f"ðŸ“‹ Plano criado: {len(plan.get('phases', []))} fases"]
+            "messages": [f"📋 Plano criado: {len(plan.get('phases', []))} fases"]
         }
         
     except Exception as e:
@@ -834,7 +834,7 @@ async def planner_node(state: ResearchState, valves) -> ResearchState:
             **state,
             "goto": "researcher",  # Fallback para pesquisa direta
             "current_agent": AgentType.PLANNER,
-            "messages": ["âš ï¸ Erro ao criar plano, iniciando pesquisa direta..."]
+            "messages": ["⚠️ Erro ao criar plano, iniciando pesquisa direta..."]
         }
 
 async def researcher_node(
@@ -843,7 +843,7 @@ async def researcher_node(
     scraper_tool
 ) -> ResearchState:
     """
-    RESEARCHER: Coleta de informaÃ§Ã£o
+    RESEARCHER: Coleta de informação
     - Descobrir URLs relevantes
     - Scrape paralelo (max 5 concurrent)
     """
@@ -862,7 +862,7 @@ async def researcher_node(
         # 2. Scrape paralelo
         scraped = await _scrape_parallel(urls, scraper_tool, max_concurrent=5)
         
-        logger.info(f"[RESEARCHER][{correlation_id}] Scraped: {len(scraped)} pÃ¡ginas")
+        logger.info(f"[RESEARCHER][{correlation_id}] Scraped: {len(scraped)} páginas")
         
         # Telemetria granular
         telemetry_sink(state, "researcher_complete", {
@@ -878,8 +878,8 @@ async def researcher_node(
             "goto": "analyst",
             "current_agent": AgentType.RESEARCHER,
             "messages": [
-                f"ðŸ” Descobriu {len(urls)} URLs",
-                f"ðŸ“„ Scraped {len(scraped)} pÃ¡ginas"
+                f"🔍 Descobriu {len(urls)} URLs",
+                f"📄 Scraped {len(scraped)} páginas"
             ]
         }
         
@@ -896,11 +896,11 @@ async def researcher_node(
             **state,
             "goto": "analyst",  # Continuar mesmo com erro
             "current_agent": AgentType.RESEARCHER,
-            "messages": [f"âš ï¸ Erro na coleta: {str(e)[:100]}..."]
+            "messages": [f"⚠️ Erro na coleta: {str(e)[:100]}..."]
         }
 
 async def _scrape_parallel(urls: List[str], scraper_tool, max_concurrent: int = 5):
-    """Helper: Scraping paralelo com semÃ¡foro"""
+    """Helper: Scraping paralelo com semáforo"""
     import asyncio
     import json
     
@@ -924,9 +924,9 @@ async def _scrape_parallel(urls: List[str], scraper_tool, max_concurrent: int = 
 
 async def analyst_node(state: ResearchState, valves) -> ResearchState:
     """
-    ANALYST: ExtraÃ§Ã£o de conhecimento
+    ANALYST: Extração de conhecimento
     - Extrair fatos estruturados
-    - Validar evidÃªncias
+    - Validar evidências
     """
     scraped = state.get("scraped_content", [])
     objective = state.get("user_query")
@@ -935,10 +935,10 @@ async def analyst_node(state: ResearchState, valves) -> ResearchState:
     logger.info(f"[ANALYST][{correlation_id}] Analisando {len(scraped)} documentos")
     
     try:
-        # Concatenar conteÃºdo
+        # Concatenar conteúdo
         context = "\n\n".join([s.get("content", "")[:2000] for s in scraped])
         
-        # Simular anÃ¡lise para demonstraÃ§Ã£o
+        # Simular análise para demonstração
         facts = [
             {"text": f"Fato 1 sobre {objective}", "source": "doc1", "confidence": 0.8},
             {"text": f"Fato 2 sobre {objective}", "source": "doc2", "confidence": 0.7},
@@ -959,11 +959,11 @@ async def analyst_node(state: ResearchState, valves) -> ResearchState:
             "facts": facts,
             "goto": "judge",
             "current_agent": AgentType.ANALYST,
-            "messages": [f"ðŸ’¡ Extraiu {len(facts)} fatos"]
+            "messages": [f"💡 Extraiu {len(facts)} fatos"]
         }
         
     except Exception as e:
-        logger.error(f"[ANALYST][{correlation_id}] Erro na anÃ¡lise: {e}")
+        logger.error(f"[ANALYST][{correlation_id}] Erro na análise: {e}")
         
         # Telemetria granular para erro
         telemetry_sink(state, "analyst_error", {
@@ -976,12 +976,12 @@ async def analyst_node(state: ResearchState, valves) -> ResearchState:
             "facts": [],
             "goto": "judge",
             "current_agent": AgentType.ANALYST,
-            "messages": [f"âš ï¸ Erro na anÃ¡lise: {str(e)[:100]}..."]
+            "messages": [f"⚠️ Erro na análise: {str(e)[:100]}..."]
         }
 
 async def judge_node(state: ResearchState, valves) -> ResearchState:
     """
-    JUDGE: Tomada de decisÃ£o
+    JUDGE: Tomada de decisão
     - Avaliar qualidade dos fatos
     - Decidir: continue, done, human_feedback
     """
@@ -993,21 +993,21 @@ async def judge_node(state: ResearchState, valves) -> ResearchState:
     logger.info(f"[JUDGE][{correlation_id}] Avaliando {len(facts)} fatos (fase {current_phase}/{total_phases})")
     
     try:
-        # LÃ³gica de decisÃ£o simples
+        # Lógica de decisão simples
         if len(facts) >= 5:
             verdict = "done"
             reasoning = "Suficientes fatos coletados"
         elif current_phase >= total_phases - 1:
             verdict = "done"
-            reasoning = "Todas as fases concluÃ­das"
+            reasoning = "Todas as fases concluídas"
         elif len(facts) < 2:
             verdict = "continue"
             reasoning = "Poucos fatos, precisa mais pesquisa"
         else:
             verdict = "human_feedback"
-            reasoning = "AvaliaÃ§Ã£o intermediÃ¡ria necessÃ¡ria"
+            reasoning = "Avaliação intermediária necessária"
         
-        # Roteamento dinÃ¢mico
+        # Roteamento dinâmico
         if verdict == "done":
             goto = "reporter"
         elif verdict == "continue":
@@ -1017,7 +1017,7 @@ async def judge_node(state: ResearchState, valves) -> ResearchState:
         else:
             goto = "reporter"
         
-        logger.info(f"[JUDGE][{correlation_id}] DecisÃ£o: {verdict} â†’ {goto}")
+        logger.info(f"[JUDGE][{correlation_id}] Decisão: {verdict} → {goto}")
         
         # Telemetria granular
         telemetry_sink(state, "judge_complete", {
@@ -1034,11 +1034,11 @@ async def judge_node(state: ResearchState, valves) -> ResearchState:
             "reasoning": reasoning,
             "goto": goto,
             "current_agent": AgentType.JUDGE,
-            "messages": [f"âš–ï¸ DecisÃ£o: {verdict} - {reasoning}"]
+            "messages": [f"⚖️ Decisão: {verdict} - {reasoning}"]
         }
         
     except Exception as e:
-        logger.error(f"[JUDGE][{correlation_id}] Erro na decisÃ£o: {e}")
+        logger.error(f"[JUDGE][{correlation_id}] Erro na decisão: {e}")
         
         # Telemetria granular para erro
         telemetry_sink(state, "judge_error", {
@@ -1052,12 +1052,12 @@ async def judge_node(state: ResearchState, valves) -> ResearchState:
             "reasoning": f"Erro: {str(e)[:100]}",
             "goto": "reporter",
             "current_agent": AgentType.JUDGE,
-            "messages": [f"âš ï¸ Erro na decisÃ£o: {str(e)[:100]}..."]
+            "messages": [f"⚠️ Erro na decisão: {str(e)[:100]}..."]
         }
 
 async def human_feedback_node(state: ResearchState) -> ResearchState:
     """
-    HUMAN_FEEDBACK: Ponto de interaÃ§Ã£o
+    HUMAN_FEEDBACK: Ponto de interação
     - Apresentar status atual
     - Coletar feedback via interrupt
     """
@@ -1067,7 +1067,7 @@ async def human_feedback_node(state: ResearchState) -> ResearchState:
     
     logger.info(f"[HUMAN_FEEDBACK][{correlation_id}] Solicitando feedback (fatos: {facts_count})")
     
-    # Apresentar contexto ao usuÃ¡rio
+    # Apresentar contexto ao usuário
     interrupt_payload = {
         "facts_count": facts_count,
         "reasoning": reasoning,
@@ -1079,25 +1079,25 @@ async def human_feedback_node(state: ResearchState) -> ResearchState:
     return {
         **state,
         "goto": "researcher",
-        "current_agent": AgentType.HUMAN_FEEDBACK,  # âœ… FIX (was REPORTER)
-        "messages": ["ðŸ‘¤ Continuando apÃ³s feedback..."]
+        "current_agent": AgentType.HUMAN_FEEDBACK,  # ✅ FIX (was REPORTER)
+        "messages": ["👤 Continuando após feedback..."]
     }
 
 async def reporter_node(state: ResearchState, valves) -> ResearchState:
     """
-    REPORTER: SÃ­ntese final
+    REPORTER: Síntese final
     - Agregar fatos
-    - Gerar relatÃ³rio estruturado
+    - Gerar relatório estruturado
     """
     facts = state.get("facts", [])
     query = state.get("user_query")
     correlation_id = state.get("correlation_id", "unknown")
     
-    logger.info(f"[REPORTER][{correlation_id}] Gerando relatÃ³rio com {len(facts)} fatos")
+    logger.info(f"[REPORTER][{correlation_id}] Gerando relatório com {len(facts)} fatos")
     
     try:
-        # Gerar relatÃ³rio
-        report = f"# RelatÃ³rio de Pesquisa: {query}\n\n"
+        # Gerar relatório
+        report = f"# Relatório de Pesquisa: {query}\n\n"
         report += "## Principais Descobertas\n\n"
         
         for i, fact in enumerate(facts[:10], 1):
@@ -1105,7 +1105,7 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
         
         report += f"\n**Total de fatos**: {len(facts)}\n"
         
-        logger.info(f"[REPORTER][{correlation_id}] RelatÃ³rio gerado: {len(report)} chars")
+        logger.info(f"[REPORTER][{correlation_id}] Relatório gerado: {len(report)} chars")
         
         # Telemetria granular
         telemetry_sink(state, "reporter_complete", {
@@ -1119,11 +1119,11 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
             "final_report": report,
             "goto": END,
             "current_agent": AgentType.REPORTER,
-            "messages": ["ðŸ“Š RelatÃ³rio gerado"]
+            "messages": ["📊 Relatório gerado"]
         }
         
     except Exception as e:
-        logger.error(f"[REPORTER][{correlation_id}] Erro ao gerar relatÃ³rio: {e}")
+        logger.error(f"[REPORTER][{correlation_id}] Erro ao gerar relatório: {e}")
         
         # Telemetria granular para erro
         telemetry_sink(state, "reporter_error", {
@@ -1133,10 +1133,10 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
         
         return {
             **state,
-            "final_report": f"Erro ao gerar relatÃ³rio: {str(e)[:100]}",
+            "final_report": f"Erro ao gerar relatório: {str(e)[:100]}",
             "goto": END,
             "current_agent": AgentType.REPORTER,
-            "messages": [f"âš ï¸ Erro no relatÃ³rio: {str(e)[:100]}..."]
+            "messages": [f"⚠️ Erro no relatório: {str(e)[:100]}..."]
         }
 
 # ============ END MULTI-AGENT NODES ============
@@ -1145,7 +1145,7 @@ async def reporter_node(state: ResearchState, valves) -> ResearchState:
 
 def test_guard_new_phase_dedup():
     """Test Guard 1: Anti-duplicate NEW_PHASE detection"""
-    print("ðŸ§ª Testing Guard 1: Anti-duplicate NEW_PHASE")
+    print("🧪 Testing Guard 1: Anti-duplicate NEW_PHASE")
     
     # Setup test state
     state = {
@@ -1178,11 +1178,11 @@ def test_guard_new_phase_dedup():
     assert result['next_query'] == 'executive search Brasil volume', f"Expected seed query, got {result['next_query']}"
     assert 'Anti-duplicate guard' in result['modifications'][0], f"Expected modification message, got {result['modifications']}"
     
-    print("âœ… Guard 1 test passed: Duplicate phase detected and converted to refine")
+    print("✅ Guard 1 test passed: Duplicate phase detected and converted to refine")
 
 def test_guard_redundant_refine():
     """Test Guard 2: Anti-redundant REFINE blocking"""
-    print("ðŸ§ª Testing Guard 2: Anti-redundant REFINE")
+    print("🧪 Testing Guard 2: Anti-redundant REFINE")
     
     # Setup test state
     state = {
@@ -1204,11 +1204,11 @@ def test_guard_redundant_refine():
     assert result['next_query'] == '', f"Expected empty query, got {result['next_query']}"
     assert 'Anti-redundant refine' in result['modifications'][0], f"Expected modification message, got {result['modifications']}"
     
-    print("âœ… Guard 2 test passed: Redundant query detected and converted to done")
+    print("✅ Guard 2 test passed: Redundant query detected and converted to done")
 
 def test_seed_rotation():
     """Test Guard 3: Seed family rotation"""
-    print("ðŸ§ª Testing Guard 3: Seed family rotation")
+    print("🧪 Testing Guard 3: Seed family rotation")
     
     # Setup test state
     state = {
@@ -1232,13 +1232,13 @@ def test_seed_rotation():
     
     # Assertions
     assert result['new_phase']['seed_family_hint'] == 'problem-centric', f"Expected 'problem-centric', got {result['new_phase']['seed_family_hint']}"
-    assert 'MudanÃ§a de famÃ­lia' in result['new_phase']['reasoning'], f"Expected rotation message, got {result['new_phase']['reasoning']}"
+    assert 'Mudança de família' in result['new_phase']['reasoning'], f"Expected rotation message, got {result['new_phase']['reasoning']}"
     
-    print("âœ… Guard 3 test passed: Seed family rotated from entity-centric to problem-centric")
+    print("✅ Guard 3 test passed: Seed family rotated from entity-centric to problem-centric")
 
 def test_router_v2_decisions():
     """Test Router v2: Policy-based decisions"""
-    print("ðŸ§ª Testing Router v2: Policy-based decisions")
+    print("🧪 Testing Router v2: Policy-based decisions")
     
     # Test max loops
     state = {
@@ -1270,13 +1270,13 @@ def test_router_v2_decisions():
     result = should_continue_research_v2(state)
     assert result == "discovery", f"Expected 'discovery' to continue, got {result}"
     
-    print("âœ… Router v2 tests passed: All decision paths working correctly")
+    print("✅ Router v2 tests passed: All decision paths working correctly")
 
 def test_semantic_loop_detection():
     """Test semantic loop detection prevents infinite loops"""
-    print("ðŸ§ª Testing Semantic Loop Detection")
+    print("🧪 Testing Semantic Loop Detection")
     
-    # Simular state idÃªntico
+    # Simular state idêntico
     state = {
         'correlation_id': 'test_loop',
         'verdict': 'continue',
@@ -1293,13 +1293,13 @@ def test_semantic_loop_detection():
     result2 = should_continue_research_v2(state)
     assert result2 == "END", f"Expected END (loop detected), got {result2}"
     
-    print("âœ… Semantic loop detection working correctly")
+    print("✅ Semantic loop detection working correctly")
 
 def test_state_validation():
     """Test state validation catches invalid states"""
-    print("ðŸ§ª Testing State Validation")
+    print("🧪 Testing State Validation")
     
-    # State vÃ¡lido
+    # State válido
     valid_state = {
         'loop_count': 1,
         'discoveries': [],
@@ -1310,7 +1310,7 @@ def test_state_validation():
     is_valid, errors = validate_research_state(valid_state)
     assert is_valid, f"Expected valid, got errors: {errors}"
     
-    # State invÃ¡lido - loop_count nÃ£o Ã© int
+    # State inválido - loop_count não é int
     invalid_state1 = {
         'loop_count': "1",  # String em vez de int
         'discoveries': [],
@@ -1320,7 +1320,7 @@ def test_state_validation():
     assert not is_valid, "Expected invalid for loop_count as string"
     assert "loop_count must be int" in errors
     
-    # State invÃ¡lido - verdict invÃ¡lido
+    # State inválido - verdict inválido
     invalid_state2 = {
         'loop_count': 1,
         'verdict': 'invalid_verdict'
@@ -1328,11 +1328,11 @@ def test_state_validation():
     is_valid, errors = validate_research_state(invalid_state2)
     assert not is_valid, "Expected invalid for bad verdict"
     
-    print("âœ… State validation working correctly")
+    print("✅ State validation working correctly")
 
 def test_tfidf_similarity():
     """Test TF-IDF similarity calculation"""
-    print("ðŸ§ª Testing TF-IDF similarity")
+    print("🧪 Testing TF-IDF similarity")
     
     # Test high similarity (adjusted threshold)
     sim1 = _calculate_similarity_tfidf("Quantify market size", "Measure market volume")
@@ -1350,11 +1350,11 @@ def test_tfidf_similarity():
     sim4 = _calculate_similarity_tfidf("test", "test")
     assert sim4 == 1.0, f"Expected 1.0 for identical strings, got {sim4}"
     
-    print(f"âœ… TF-IDF similarity tests passed: sim1={sim1:.3f}, sim2={sim2:.3f}, sim3={sim3:.3f}, sim4={sim4:.3f}")
+    print(f"✅ TF-IDF similarity tests passed: sim1={sim1:.3f}, sim2={sim2:.3f}, sim3={sim3:.3f}, sim4={sim4:.3f}")
 
 def test_telemetry_with_usage():
     """Test telemetry with usage tracking"""
-    print("ðŸ§ª Testing telemetry with usage")
+    print("🧪 Testing telemetry with usage")
     
     state = {'correlation_id': 'test_telem', 'loop_idx': 1}
     usage = {'prompt_tokens': 1000, 'completion_tokens': 500, 'total_tokens': 1500}
@@ -1365,11 +1365,11 @@ def test_telemetry_with_usage():
     # Test without usage
     telemetry_sink(state, 'test_event_no_usage', {'data': 'test'})
     
-    print("âœ… Telemetry with usage tests passed: No exceptions raised")
+    print("✅ Telemetry with usage tests passed: No exceptions raised")
 
 def test_router_flat_streak():
     """Test router with flat_streak gate"""
-    print("ðŸ§ª Testing router flat_streak gate")
+    print("🧪 Testing router flat_streak gate")
     
     # Test flat_streak exceeded
     state = {
@@ -1397,11 +1397,11 @@ def test_router_flat_streak():
     result = should_continue_research_v2(state)
     assert result == "discovery", f"Expected discovery for flat_streak=1 <= max=2, got {result}"
     
-    print("âœ… Router flat_streak tests passed: Gate working correctly")
+    print("✅ Router flat_streak tests passed: Gate working correctly")
 
 def test_coordinator_routing():
     """Test coordinator routing for different query types"""
-    print("ðŸ§ª Testing Coordinator routing")
+    print("🧪 Testing Coordinator routing")
     
     # Test query vaga
     state = {
@@ -1420,19 +1420,19 @@ def test_coordinator_routing():
     result = coordinator_node(state)
     assert result['goto'] == 'planner', f"Expected planner, got {result['goto']}"
     
-    # Test query padrÃ£o
+    # Test query padrão
     state = {
-        'user_query': 'pesquisar sobre inteligÃªncia artificial no Brasil',
+        'user_query': 'pesquisar sobre inteligência artificial no Brasil',
         'correlation_id': 'test_coord_3'
     }
     result = coordinator_node(state)
     assert result['goto'] == 'researcher', f"Expected researcher, got {result['goto']}"
     
-    print("âœ… Coordinator routing tests passed: All query types routed correctly")
+    print("✅ Coordinator routing tests passed: All query types routed correctly")
 
 def test_multi_agent_flow():
     """Test multi-agent flow with researcher -> analyst -> judge"""
-    print("ðŸ§ª Testing Multi-Agent flow")
+    print("🧪 Testing Multi-Agent flow")
     
     # Mock tools (simplified for sync testing)
     def mock_discovery_tool(query, return_dict=True):
@@ -1443,7 +1443,7 @@ def test_multi_agent_flow():
     
     # Test researcher node (simplified)
     state = {
-        'user_query': 'pesquisar sobre inteligÃªncia artificial no Brasil',
+        'user_query': 'pesquisar sobre inteligência artificial no Brasil',
         'correlation_id': 'test_flow_1'
     }
     # Skip async test for now - just test coordinator
@@ -1457,26 +1457,26 @@ def test_multi_agent_flow():
         'correlation_id': 'test_flow_2'
     }
     # Skip async test for now
-    print("âœ… Multi-Agent flow tests passed: Coordinator routing working correctly")
+    print("✅ Multi-Agent flow tests passed: Coordinator routing working correctly")
 
 def test_reporter_synthesis():
     """Test reporter node synthesis"""
-    print("ðŸ§ª Testing Reporter synthesis")
+    print("🧪 Testing Reporter synthesis")
     
     # Simplified test - just verify coordinator works
     state = {
-        'user_query': 'pesquisar sobre inteligÃªncia artificial no Brasil',
+        'user_query': 'pesquisar sobre inteligência artificial no Brasil',
         'correlation_id': 'test_reporter_1'
     }
     
     result = coordinator_node(state)
     assert result['goto'] == 'researcher', f"Expected researcher, got {result['goto']}"
     
-    print("âœ… Reporter synthesis tests passed: Coordinator routing working correctly")
+    print("✅ Reporter synthesis tests passed: Coordinator routing working correctly")
 
 def run_multi_agent_tests():
     """Run all Multi-Agent tests"""
-    print("ðŸš€ Running Multi-Agent Test Suite...")
+    print("🚀 Running Multi-Agent Test Suite...")
     print("=" * 50)
     
     try:
@@ -1486,16 +1486,16 @@ def run_multi_agent_tests():
         test_reporter_synthesis()
         
         print("=" * 50)
-        print("ðŸŽ‰ All Multi-Agent tests passed!")
+        print("🎉 All Multi-Agent tests passed!")
         return True
         
     except Exception as e:
-        print(f"âŒ Multi-Agent test failed: {e}")
+        print(f"❌ Multi-Agent test failed: {e}")
         return False
 
 def run_langgraph_tests():
     """Run all LangGraph tests including P0 improvements and Multi-Agent"""
-    print("ðŸš€ Running Complete LangGraph Test Suite...")
+    print("🚀 Running Complete LangGraph Test Suite...")
     print("=" * 50)
     
     try:
@@ -1520,11 +1520,11 @@ def run_langgraph_tests():
         test_reporter_synthesis()
         
         print("=" * 50)
-        print("ðŸŽ‰ All LangGraph tests passed (P0 + Multi-Agent)!")
+        print("🎉 All LangGraph tests passed (P0 + Multi-Agent)!")
         return True
         
     except Exception as e:
-        print(f"âŒ Test failed: {e}")
+        print(f"❌ Test failed: {e}")
         return False
 
 # ============ END TEST SUITE ============
@@ -1635,7 +1635,7 @@ def _emit_decision_snapshot(step: str, vector: Dict[str, Any], reason: str = "",
         safe_vector = {}
         for k, v in (vector or {}).items():
             if isinstance(v, str) and len(v) > 800:
-                safe_vector[k] = v[:800] + "â€¦"
+                safe_vector[k] = v[:800] + "…"
             else:
                 safe_vector[k] = v
         payload = {
@@ -1697,10 +1697,10 @@ def retry_with_backoff(
 
 
 # ==================== CUSTOM EXCEPTIONS ====================
-# ExceÃ§Ãµes especÃ­ficas para melhor rastreabilidade e recovery strategies
+# Exceções específicas para melhor rastreabilidade e recovery strategies
 
 class PipeExecutionError(Exception):
-    """Erro base para execuÃ§Ã£o do Pipe - permite captura global de erros do pipeline"""
+    """Erro base para execução do Pipe - permite captura global de erros do pipeline"""
     pass
 
 
@@ -1710,33 +1710,33 @@ class LLMConfigurationError(PipeExecutionError):
 
 
 class ContractValidationError(PipeExecutionError):
-    """Erro na validaÃ§Ã£o do contract - estrutura invÃ¡lida ou incompatÃ­vel"""
+    """Erro na validação do contract - estrutura inválida ou incompatível"""
     pass
 
 
 class ContractGenerationError(PipeExecutionError):
-    """Erro na geraÃ§Ã£o do contract pelo LLM Planner"""
+    """Erro na geração do contract pelo LLM Planner"""
     pass
 
 
 class ToolExecutionError(PipeExecutionError):
-    """Erro na execuÃ§Ã£o de ferramentas (discovery, scraper, context_reducer)"""
+    """Erro na execução de ferramentas (discovery, scraper, context_reducer)"""
     pass
 
 
 # ==================== PYDANTIC MODELS FOR CONTRACT VALIDATION ====================
-# ValidaÃ§Ã£o formal de contracts para prevenir estruturas invÃ¡lidas
+# Validação formal de contracts para prevenir estruturas inválidas
 
 # ===== CONTRACT SCHEMAS (Fim-a-fim) =====
 
 class EntitiesModel(BaseModel):
-    """Entidades canÃ´nicas e aliases"""
+    """Entidades canônicas e aliases"""
     canonical: List[str]
     aliases: List[str] = []
 
 
 class StrategistPayloadModel(BaseModel):
-    """Contrato de saÃ­da do Estrategista (Call 1) - JSON-only, sem CoT exposto"""
+    """Contrato de saída do Estrategista (Call 1) - JSON-only, sem CoT exposto"""
     intent_profile: str
     intent: str
     executive_objectives: List[str]
@@ -1788,7 +1788,7 @@ class PhaseTypeModel(BaseModel):
 
 
 class PlannerPhaseModel(BaseModel):
-    """Phase model for Planner contract - com phase_type e validaÃ§Ã£o estrita"""
+    """Phase model for Planner contract - com phase_type e validação estrita"""
     name: str
     phase_type: str  # "industry"|"profiles"|"news"|"regulatory"|"financials"|"tech"
     objective: str
@@ -1804,14 +1804,14 @@ class PlannerPhaseModel(BaseModel):
     )
     seed_family_hint: Optional[str] = Field(
         default="entity-centric",
-        description="FamÃ­lia de exploraÃ§Ã£o: entity-centric|problem-centric|outcome-centric|regulatory|counterfactual",
+        description="Família de exploração: entity-centric|problem-centric|outcome-centric|regulatory|counterfactual",
     )
     must_terms: List[str] = []
     time_hint: TimeHintModel
     lang_bias: List[str] = ["pt-BR", "en"]
     geo_bias: List[str] = ["BR", "global"]
     suggested_domains: List[str] = Field(
-        default=[], description="DomÃ­nios sugeridos para priorizaÃ§Ã£o"
+        default=[], description="Domínios sugeridos para priorização"
     )
     suggested_filetypes: List[str] = Field(
         default=[], description="Tipos de arquivo sugeridos (html, pdf, etc)"
@@ -1838,13 +1838,13 @@ class PlannerPhaseModel(BaseModel):
         for op in forbidden:
             if op in v:
                 raise ValueError(f"seed_query cannot contain operator: {op}")
-        # âœ… REMOVED: Word count validation (3-6 words) - bloqueava queries vÃ¡lidas com entidades compostas
+        # ✅ REMOVED: Word count validation (3-6 words) - bloqueava queries válidas com entidades compostas
         # Discovery's internal Planner will optimize the query regardless of initial seed length
         return v
 
     @validator("seed_core")
     def validate_seed_core(cls, v):
-        """Valida seed_core: â‰¥3 palavras, â‰¤200 chars, sem operadores"""
+        """Valida seed_core: ≥3 palavras, ≤200 chars, sem operadores"""
         if not v or not v.strip():
             return ""  # Opcional, pode estar vazio
 
@@ -1856,18 +1856,18 @@ class PlannerPhaseModel(BaseModel):
 
         # Validate length
         if len(v) > 200:
-            raise ValueError(f"seed_core must be â‰¤200 chars, got {len(v)}")
+            raise ValueError(f"seed_core must be ≤200 chars, got {len(v)}")
 
-        # Validate word count (mÃ­nimo 3 palavras)
+        # Validate word count (mínimo 3 palavras)
         words = v.split()
         if len(words) < 3:
-            raise ValueError(f"seed_core must have â‰¥3 words, got {len(words)}")
+            raise ValueError(f"seed_core must have ≥3 words, got {len(words)}")
 
         return v
 
     @validator("seed_family_hint")
     def validate_seed_family(cls, v):
-        """Valida seed_family_hint: enum de famÃ­lias suportadas"""
+        """Valida seed_family_hint: enum de famílias suportadas"""
         valid_families = [
             "entity-centric",
             "problem-centric",
@@ -1883,7 +1883,7 @@ class PlannerPhaseModel(BaseModel):
 
     @validator("must_terms")
     def validate_must_terms_policy(cls, v, values):
-        """PolÃ­tica: industry nÃ£o deve ter todos os players; profiles/news devem ter"""
+        """Política: industry não deve ter todos os players; profiles/news devem ter"""
         phase_type = values.get("phase_type")
         if phase_type == "industry" and len(v) > 5:
             raise ValueError(
@@ -1893,7 +1893,7 @@ class PlannerPhaseModel(BaseModel):
 
 
 class PlannerPayloadModel(BaseModel):
-    """Contrato de saÃ­da do Planner (Call 2) - JSON-only, sem CoT"""
+    """Contrato de saída do Planner (Call 2) - JSON-only, sem CoT"""
     plan_intent: str
     assumptions_to_validate: List[str] = []
     phases: List[PlannerPhaseModel]
@@ -1923,19 +1923,19 @@ class QualityRailsModel(BaseModel):
 # ==================== CONSTANTS AND UTILITIES ====================
 class PipeConstants:
     """
-    ConfiguraÃ§Ãµes e constantes centralizadas do pipeline.
-    Valores padrÃ£o que podem ser sobrescritos via Valves UI.
+    Configurações e constantes centralizadas do pipeline.
+    Valores padrão que podem ser sobrescritos via Valves UI.
     """
 
-    # ===== LIMITES DE EXECUÃ‡ÃƒO =====
-    MIN_PHASES = 3  # MÃ­nimo de fases recomendadas
+    # ===== LIMITES DE EXECUÇÃO =====
+    MIN_PHASES = 3  # Mínimo de fases recomendadas
     MAX_PHASES_LIMIT = 15  # Limite absoluto de fases
-    MAX_FUNCTION_LENGTH = 100  # Tamanho mÃ¡ximo recomendado para mÃ©todos (linhas)
+    MAX_FUNCTION_LENGTH = 100  # Tamanho máximo recomendado para métodos (linhas)
 
     # ===== TIMEOUTS (segundos) =====
-    CONTEXT_DETECTION_TIMEOUT = 30  # Timeout para detecÃ§Ã£o de contexto
+    CONTEXT_DETECTION_TIMEOUT = 30  # Timeout para detecção de contexto
     LLM_CALL_TIMEOUT = 60  # Timeout para chamadas LLM
-    TOOL_EXECUTION_TIMEOUT = 120  # Timeout para execuÃ§Ã£o de ferramentas
+    TOOL_EXECUTION_TIMEOUT = 120  # Timeout para execução de ferramentas
 
     # ===== DEFAULTS DE PERFIL =====
     DEFAULT_PROFILE = "company_profile"
@@ -1948,39 +1948,39 @@ class PipeConstants:
     ]
 
     # ===== QUALITY RAILS =====
-    MIN_EVIDENCE_COVERAGE = 1.0  # 100% de fatos com â‰¥1 evidÃªncia
+    MIN_EVIDENCE_COVERAGE = 1.0  # 100% de fatos com ≥1 evidência
 
     # ===== CONTEXT DETECTION =====
     DETECTOR_COT_ENABLED = True  # Habilitar Chain-of-Thought no Context Detection
-    MIN_UNIQUE_DOMAINS = 2  # MÃ­nimo de domÃ­nios Ãºnicos por fase
-    STALENESS_DAYS_DEFAULT = 90  # Dias para considerar conteÃºdo stale
+    MIN_UNIQUE_DOMAINS = 2  # Mínimo de domínios únicos por fase
+    STALENESS_DAYS_DEFAULT = 90  # Dias para considerar conteúdo stale
     NOVELTY_THRESHOLD = 0.3  # Threshold para ratio de novidade
 
-    # ===== DEDUPLICAÃ‡ÃƒO =====
-    MAX_DEDUP_PARAGRAPHS = 200  # MÃ¡ximo de parÃ¡grafos apÃ³s deduplicaÃ§Ã£o (alinhado com valve)
-    DEDUP_SIMILARITY_THRESHOLD = 0.85  # Threshold de similaridade (0.0-1.0, maior = menos agressivo) - v4.4: ajustado 0.9â†’0.85
-    DEDUP_RELEVANCE_WEIGHT = 0.7  # Peso da relevÃ¢ncia vs diversidade (0.6-0.8)
+    # ===== DEDUPLICAÇÃO =====
+    MAX_DEDUP_PARAGRAPHS = 200  # Máximo de parágrafos após deduplicação (alinhado com valve)
+    DEDUP_SIMILARITY_THRESHOLD = 0.85  # Threshold de similaridade (0.0-1.0, maior = menos agressivo) - v4.4: ajustado 0.9→0.85
+    DEDUP_RELEVANCE_WEIGHT = 0.7  # Peso da relevância vs diversidade (0.6-0.8)
 
     # ===== LLM CONFIGURATION =====
-    LLM_TEMPERATURE = 0.7  # Temperatura padrÃ£o para LLM
+    LLM_TEMPERATURE = 0.7  # Temperatura padrão para LLM
     LLM_MAX_TOKENS = 2048  # Max tokens para respostas LLM
-    LLM_MIN_TOKENS = 100  # Min tokens aceitÃ¡vel
+    LLM_MIN_TOKENS = 100  # Min tokens aceitável
     LLM_MAX_TOKENS_LIMIT = 4000  # Limite absoluto de tokens
 
     # ===== CONTEXT MANAGEMENT =====
-    MAX_CONTEXT_CHARS = 150000  # MÃ¡ximo de caracteres no contexto
-    MAX_HISTORY_MESSAGES = 10  # MÃ¡ximo de mensagens do histÃ³rico
+    MAX_CONTEXT_CHARS = 150000  # Máximo de caracteres no contexto
+    MAX_HISTORY_MESSAGES = 10  # Máximo de mensagens do histórico
 
-    # ===== SÃNTESE =====
-    SYNTHESIS_MIN_PARAGRAPHS = 3  # MÃ­nimo de parÃ¡grafos no relatÃ³rio
-    SYNTHESIS_PREFERRED_SECTIONS = 5  # NÃºmero preferido de seÃ§Ãµes no relatÃ³rio
+    # ===== SÍNTESE =====
+    SYNTHESIS_MIN_PARAGRAPHS = 3  # Mínimo de parágrafos no relatório
+    SYNTHESIS_PREFERRED_SECTIONS = 5  # Número preferido de seções no relatório
 
 
 # ===== Deduplication Utilities =====
 def _shingles(s: str, n: int = 3) -> set:
     """Generate n-grams (shingles) from text for similarity comparison
 
-    v4.4: Reduzido n=5â†’3 (tri-grams) - industry standard, +40% detecÃ§Ã£o de similaridade
+    v4.4: Reduzido n=5→3 (tri-grams) - industry standard, +40% detecção de similaridade
     """
     tokens = [t for t in s.lower().split() if t]
     return set(tuple(tokens[i : i + n]) for i in range(max(0, len(tokens) - n + 1)))
@@ -1996,24 +1996,24 @@ def _jaccard(a: set, b: set) -> float:
 
 
 def _is_geographic_term(term: str) -> bool:
-    """Detecta se um termo Ã© geogrÃ¡fico baseado em caracterÃ­sticas estruturais"""
+    """Detecta se um termo é geográfico baseado em características estruturais"""
     term_lower = term.strip().lower()
     
-    # Termos muito curtos (< 3 chars) sÃ£o provavelmente cÃ³digos geogrÃ¡ficos
+    # Termos muito curtos (< 3 chars) são provavelmente códigos geográficos
     if len(term_lower) < 3:
         return True
     
-    # PaÃ­ses conhecidos (lista mÃ­nima)
+    # Países conhecidos (lista mínima)
     countries = {"brasil", "brazil", "portugal", "argentina", "chile", "colombia", "mexico"}
     if term_lower in countries:
         return True
     
-    # CÃ³digos de paÃ­s comuns
+    # Códigos de país comuns
     geo_codes = {"br", "pt", "ar", "cl", "co", "mx", "us", "uk", "fr", "de", "es", "it"}
     if term_lower in geo_codes:
         return True
     
-    # Termos geogrÃ¡ficos genÃ©ricos
+    # Termos geográficos genéricos
     geo_generics = {"global", "mundial", "nacional", "internacional", "latam", "america", "europa"}
     if term_lower in geo_generics:
         return True
@@ -2032,7 +2032,7 @@ def normalize_base_url(base_url: str) -> str:
 
 
 def build_chat_endpoint(base_url: str) -> str:
-    """ConstrÃ³i endpoint de chat completions de forma robusta"""
+    """Constrói endpoint de chat completions de forma robusta"""
     from urllib.parse import urljoin
 
     norm = normalize_base_url(base_url)
@@ -2047,15 +2047,15 @@ def _hash_contract(contract: Dict[str, Any]) -> str:
 def parse_json_resilient(
     text: str, mode: str = "balanced", allow_arrays: bool = True
 ) -> Optional[dict]:
-    """CONSOLIDADO (v4.3.1): Ãšnica funÃ§Ã£o de parsing JSON com 3 modos
+    """CONSOLIDADO (v4.3.1): Única função de parsing JSON com 3 modos
 
-    Substitui 3 funÃ§Ãµes antigas:
-    - _extract_json_from_text() â†’ mode='balanced', allow_arrays=True
-    - parse_llm_json_strict() â†’ mode='strict', allow_arrays=False
-    - _soft_json_cleanup() â†’ usado internamente em mode='soft'
+    Substitui 3 funções antigas:
+    - _extract_json_from_text() → mode='balanced', allow_arrays=True
+    - parse_llm_json_strict() → mode='strict', allow_arrays=False
+    - _soft_json_cleanup() → usado internamente em mode='soft'
 
     Args:
-        text: Texto contendo JSON (possivelmente com ruÃ­do)
+        text: Texto contendo JSON (possivelmente com ruído)
         mode: 'strict' (apenas objetos, raise em erro) |
               'soft' (cleanup trailing commas) |
               'balanced' (markdown + cleanup + balanceamento) [DEFAULT]
@@ -2065,7 +2065,7 @@ def parse_json_resilient(
         Dict/List parseado ou None (mode='balanced') / raises (mode='strict')
 
     Raises:
-        ContractValidationError: Se mode='strict' e JSON invÃ¡lido
+        ContractValidationError: Se mode='strict' e JSON inválido
     """
     if not text or not isinstance(text, str):
         if mode == "strict":
@@ -2123,7 +2123,7 @@ def parse_json_resilient(
         except json.JSONDecodeError:
             return None
 
-    # MODE: BALANCED (default - mÃ¡ximo esforÃ§o)
+    # MODE: BALANCED (default - máximo esforço)
     # Tentativa 1: parse direto
     try:
         return json.loads(s)
@@ -2143,7 +2143,7 @@ def parse_json_resilient(
 
     snippet = m.group(1).strip()
 
-    # âœ… AGGRESSIVE CLEANUP (added for Analyst robustness)
+    # ✅ AGGRESSIVE CLEANUP (added for Analyst robustness)
     # Remove trailing commas, control chars, and fix common issues
     cleaned = re.sub(r"[\x00-\x1f\x7f]", "", snippet)
     cleaned = re.sub(r",\s*}", "}", cleaned)
@@ -2176,7 +2176,7 @@ def parse_json_resilient(
     logger.warning(f"Failed to parse JSON after all attempts. Preview: {snippet[:200]}...")
     return None
 def _extract_quality_metrics(facts_list: List[dict]) -> dict:
-    """CONSOLIDADO (v4.3.1 - P1C): Extrai mÃ©tricas de qualidade de lista de fatos
+    """CONSOLIDADO (v4.3.1 - P1C): Extrai métricas de qualidade de lista de fatos
 
     Usado por:
     - JudgeLLM._validate_quality_rails()
@@ -2212,7 +2212,7 @@ def _extract_quality_metrics(facts_list: List[dict]) -> dict:
             facts_with_evidence += 1
             total_evidence += len(evidencias)
 
-            # Extrair domÃ­nios
+            # Extrair domínios
             fact_domains = set()
             for ev in evidencias:
                 if not isinstance(ev, dict):
@@ -2226,15 +2226,15 @@ def _extract_quality_metrics(facts_list: List[dict]) -> dict:
                 except:
                     pass
 
-            # Contar mÃºltiplas fontes
+            # Contar múltiplas fontes
             if len(fact_domains) >= 2:
                 facts_with_multiple_sources += 1
 
-        # Contar alta confianÃ§a
-        if fact.get("confianÃ§a") == "alta":
+        # Contar alta confiança
+        if fact.get("confiança") == "alta":
             high_confidence_facts += 1
 
-        # Contar contradiÃ§Ãµes
+        # Contar contradições
         if fact.get("contradicao", False):
             contradictions += 1
 
@@ -2249,17 +2249,17 @@ def _extract_quality_metrics(facts_list: List[dict]) -> dict:
 
 
 def get_safe_llm_params(model_name: str, base_params: dict = None) -> dict:
-    """Retorna parÃ¢metros seguros para o modelo, removendo incompatÃ­veis
+    """Retorna parâmetros seguros para o modelo, removendo incompatíveis
 
-    GPT-5/GPT-4.5/O1/O3: NÃƒO suportam temperature, max_tokens
-    GPT-4/GPT-3.5: Suportam todos os parÃ¢metros
+    GPT-5/GPT-4.5/O1/O3: NÃO suportam temperature, max_tokens
+    GPT-4/GPT-3.5: Suportam todos os parâmetros
 
     Args:
         model_name: Nome do modelo (ex: "gpt-5-mini")
-        base_params: ParÃ¢metros desejados (podem ser filtrados)
+        base_params: Parâmetros desejados (podem ser filtrados)
 
     Returns:
-        Dict com parÃ¢metros seguros para o modelo
+        Dict com parâmetros seguros para o modelo
     """
     if not base_params:
         base_params = {}
@@ -2282,15 +2282,15 @@ def get_safe_llm_params(model_name: str, base_params: dict = None) -> dict:
     if "response_format" in base_params:
         safe_params["response_format"] = base_params["response_format"]
 
-    # temperature: NÃƒO suportado por modelos novos
+    # temperature: NÃO suportado por modelos novos
     if "temperature" in base_params and not is_new_gen:
         safe_params["temperature"] = base_params["temperature"]
 
-    # request_timeout: sempre seguro (nÃ£o vai no body da API)
+    # request_timeout: sempre seguro (não vai no body da API)
     if "request_timeout" in base_params:
         safe_params["request_timeout"] = base_params["request_timeout"]
 
-    # max_tokens/max_completion_tokens: NÃƒO enviar (deixar model defaults)
+    # max_tokens/max_completion_tokens: NÃO enviar (deixar model defaults)
     # OpenAI rejeita para alguns modelos
 
     return safe_params
@@ -2410,24 +2410,24 @@ def _mmr_select(
     randomize: bool = False,
     reference_chunks: List[str] = None,
 ) -> List[str]:
-    """MMR com seleÃ§Ã£o justa e preservaÃ§Ã£o de narrativa
+    """MMR com seleção justa e preservação de narrativa
 
     Args:
-        chunks: Lista de parÃ¡grafos/chunks
-        k: NÃºmero mÃ¡ximo de chunks a selecionar
+        chunks: Lista de parágrafos/chunks
+        k: Número máximo de chunks a selecionar
         lambda_div: Peso diversidade (0.0-1.0, maior = mais conservador)
-        preserve_order: True = shuffle â†’ select â†’ reorder (narrativa), False = order by size
+        preserve_order: True = shuffle → select → reorder (narrativa), False = order by size
         similarity_threshold: Threshold para considerar similar (0.0-1.0)
         randomize: Se True, embaralha chunks antes de selecionar
-        reference_chunks: Chunks de referÃªncia (dedupe candidates CONTRA estes)
+        reference_chunks: Chunks de referência (dedupe candidates CONTRA estes)
 
     Returns:
         Lista de chunks selecionados (preservando ordem original se preserve_order=True)
     """
-    # Preparar Ã­ndices originais para preservar ordem depois
+    # Preparar índices originais para preservar ordem depois
     indexed_chunks = [(i, chunk) for i, chunk in enumerate(chunks)]
 
-    # EstratÃ©gia de seleÃ§Ã£o: pode embaralhar os antigos para seleÃ§Ã£o justa
+    # Estratégia de seleção: pode embaralhar os antigos para seleção justa
     # - Se preserve_order=True e randomize=True: shuffle nos antigos, reordena ao final
     # - Se preserve_order=True e randomize=False: varre em ordem original
     # - Se preserve_order=False: prioriza chunks maiores primeiro
@@ -2442,7 +2442,7 @@ def _mmr_select(
     selected_with_indices = []
     selected_sh: List[set] = []
 
-    # Se hÃ¡ reference_chunks, inicializar selected_sh com eles (dedupe CONTRA referÃªncia)
+    # Se há reference_chunks, inicializar selected_sh com eles (dedupe CONTRA referência)
     if reference_chunks:
         for ref_chunk in reference_chunks:
             selected_sh.append(_shingles(ref_chunk))
@@ -2453,10 +2453,10 @@ def _mmr_select(
 
         s_sh = _shingles(chunk)
 
-        # Calcular similaridade mÃ¡xima com selecionados (inclui reference se houver)
+        # Calcular similaridade máxima com selecionados (inclui reference se houver)
         sim = max((0.0,) + tuple(_jaccard(s_sh, prev_sh) for prev_sh in selected_sh))
 
-        # Score MMR: relevÃ¢ncia (tamanho) - penalidade de similaridade
+        # Score MMR: relevância (tamanho) - penalidade de similaridade
         score = lambda_div * (len(chunk) / 1000.0) - (1 - lambda_div) * sim
 
         # Aceitar se: baixa similaridade OU score positivo
@@ -2466,21 +2466,21 @@ def _mmr_select(
 
     # Reordenar para preservar narrativa (se habilitado)
     if preserve_order and selected_with_indices:
-        selected_with_indices.sort(key=lambda x: x[0])  # jÃ¡ estÃ¡ em ordem, mas garantir
+        selected_with_indices.sort(key=lambda x: x[0])  # já está em ordem, mas garantir
 
     return [chunk for _, chunk in selected_with_indices]
 class Deduplicator:
-    """DeduplicaÃ§Ã£o centralizada com mÃºltiplos algoritmos (v4.4)
+    """Deduplicação centralizada com múltiplos algoritmos (v4.4)
 
-    Algoritmos disponÃ­veis:
-    - mmr: Maximal Marginal Relevance (padrÃ£o, O(nÂ²))
-    - minhash: MinHash LSH (rÃ¡pido, O(n), requer datasketch)
-    - tfidf: TF-IDF + Cosine Similarity (semÃ¢ntico, requer sklearn)
+    Algoritmos disponíveis:
+    - mmr: Maximal Marginal Relevance (padrão, O(n²))
+    - minhash: MinHash LSH (rápido, O(n), requer datasketch)
+    - tfidf: TF-IDF + Cosine Similarity (semântico, requer sklearn)
 
     Features:
-    - PreservaÃ§Ã£o de ordem original (narrativa)
-    - MÃ©tricas de qualidade (reduction %, tokens saved)
-    - Fallback automÃ¡tico se biblioteca nÃ£o disponÃ­vel
+    - Preservação de ordem original (narrativa)
+    - Métricas de qualidade (reduction %, tokens saved)
+    - Fallback automático se biblioteca não disponível
     """
 
     def __init__(self, valves):
@@ -2501,33 +2501,33 @@ class Deduplicator:
         key_questions: Optional[List[str]] = None,
         enable_context_aware: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """DeduplicaÃ§Ã£o unificada com escolha de algoritmo
+        """Deduplicação unificada com escolha de algoritmo
 
         Args:
-            chunks: Lista de parÃ¡grafos/chunks
-            max_chunks: NÃºmero mÃ¡ximo a retornar
+            chunks: Lista de parágrafos/chunks
+            max_chunks: Número máximo a retornar
             algorithm: 'mmr' | 'minhash' | 'tfidf' | 'semantic' (None = usa valve)
             threshold: Similaridade threshold (None = usa valve)
             preserve_order: Reordenar para manter narrativa
             preserve_recent_pct: % de chunks recentes a preservar intactos (0.0-1.0)
-            shuffle_older: embaralhar seleÃ§Ã£o dos CHUNKS ANTIGOS (e reordenar ao final)
-            reference_first: se True, recent sÃ£o REFERÃŠNCIA (dedupe older CONTRA recent)
+            shuffle_older: embaralhar seleção dos CHUNKS ANTIGOS (e reordenar ao final)
+            reference_first: se True, recent são REFERÊNCIA (dedupe older CONTRA recent)
             must_terms: Termos que devem ser preservados (context-aware)
-            key_questions: QuestÃµes-chave para matching (context-aware)
-            enable_context_aware: Ativar preservaÃ§Ã£o de chunks crÃ­ticos (None = usa valve)
+            key_questions: Questões-chave para matching (context-aware)
+            enable_context_aware: Ativar preservação de chunks críticos (None = usa valve)
 
         Returns:
             Dict com: chunks (deduped), original_count, deduped_count, reduction_pct, tokens_saved
 
         DIVERSITY CAPS ENFORCEMENT (context-aware):
-        Quando habilitado, tenta garantir cobertura mÃ­nima por categoria:
-        - min_new_domains: domÃ­nios Ãºnicos (evita echo chamber)
+        Quando habilitado, tenta garantir cobertura mínima por categoria:
+        - min_new_domains: domínios únicos (evita echo chamber)
         - min_official: fontes oficiais (gov, reguladores)
         - min_independent: fontes independentes (imprensa, academia)
 
-        EstratÃ©gia:
+        Estratégia:
         1) Context-aware prioritization (must_terms, key_questions)
-        2) DeduplicaÃ§Ã£o do restante (low priority)
+        2) Deduplicação do restante (low priority)
         3) First pass: preencher quotas de diversidade
         4) Second pass: completar slots restantes por score
         5) Restaurar ordem original dos chunks selecionados
@@ -2577,7 +2577,7 @@ class Deduplicator:
             high_count = min(high_count, max_chunks)
             available_slots = max_chunks - high_count
 
-            # Priorizar must_terms â†’ key_questions â†’ position quando high > max
+            # Priorizar must_terms → key_questions → position quando high > max
             if len(high_priority) > max_chunks:
                 # Ordenar high_priority por tipo de score (must > question > position)
                 high_priority_scored = []
@@ -2598,7 +2598,7 @@ class Deduplicator:
             else:
                 high_priority = high_priority[:high_count]
 
-            # Dedupear low_priority se houver slots disponÃ­veis
+            # Dedupear low_priority se houver slots disponíveis
             final_tuples = list(high_priority)  # [(idx, chunk), ...]
 
             # ===== Diversity caps enforcement (best-effort) =====
@@ -2644,7 +2644,7 @@ class Deduplicator:
                     selected_independent += 1
 
             if available_slots > 0 and low_priority:
-                # Criar dicionÃ¡rio chunk â†’ [indices] para mapeamento robusto
+                # Criar dicionário chunk → [indices] para mapeamento robusto
                 low_chunks = [ch for _, ch in low_priority]
                 chunk_to_indices = {}
                 for idx, chunk in low_priority:
@@ -2652,7 +2652,7 @@ class Deduplicator:
                         chunk_to_indices[chunk] = []
                     chunk_to_indices[chunk].append(idx)
                 
-                # Dedupear apenas os chunks (sem Ã­ndices)
+                # Dedupear apenas os chunks (sem índices)
                 deduped_low = self._dedupe_chunks(low_chunks, available_slots, algorithm, threshold)
 
                 # First pass: satisfy diversity caps
@@ -2684,17 +2684,17 @@ class Deduplicator:
                         while items and any(t[0] == items[0] for t in final_tuples):
                             items.pop(0)
                 
-                # Reconstruir com Ã­ndices originais
+                # Reconstruir com índices originais
                 for chunk in deduped_low:
                     if available_slots <= 0:
                         break
                     if chunk in chunk_to_indices and chunk_to_indices[chunk]:
-                        idx = chunk_to_indices[chunk].pop(0)  # Pegar primeiro Ã­ndice disponÃ­vel
+                        idx = chunk_to_indices[chunk].pop(0)  # Pegar primeiro índice disponível
                         final_tuples.append((idx, chunk))
                         available_slots -= 1
 
-            # SEMPRE restaurar ordem original (1b: forÃ§ar preserve_order=True)
-            final_tuples.sort(key=lambda x: x[0])  # Ordenar por Ã­ndice original
+            # SEMPRE restaurar ordem original (1b: forçar preserve_order=True)
+            final_tuples.sort(key=lambda x: x[0])  # Ordenar por índice original
             final_chunks = [chunk for _, chunk in final_tuples]
 
             if getattr(self.valves, "VERBOSE_DEBUG", False):
@@ -2705,7 +2705,7 @@ class Deduplicator:
                         url_line = chunk.split('\n')[0]
                         print(f"[CONTEXT_AWARE]   [{i}] {url_line[:80]}...")
 
-            # MÃ©tricas
+            # Métricas
             deduped_count = len(final_chunks)
                 
             # Retornar resultado context-aware
@@ -2716,7 +2716,7 @@ class Deduplicator:
                 "reduction_pct": (original_count - deduped_count) / original_count * 100,
                 "tokens_saved": 0,  # TODO: calcular tokens saved
                 "algorithm_used": f"context_aware_{algorithm}",
-                "fallback_occurred": False,  # Context-aware nÃ£o usa fallback
+                "fallback_occurred": False,  # Context-aware não usa fallback
                 "dependencies_checked": True,
             }
             
@@ -2737,7 +2737,7 @@ class Deduplicator:
             effective_max = max_chunks
 
         # Aplicar algoritmo escolhido
-        # Se reference_first=True, dedupear older CONTRA recent (recent como referÃªncia)
+        # Se reference_first=True, dedupear older CONTRA recent (recent como referência)
         reference_chunks_for_mmr = recent_chunks if reference_first else []
 
         try:
@@ -2760,7 +2760,7 @@ class Deduplicator:
             elif algorithm == "semantic":
                 try:
                     model_name = getattr(self.valves, "SEMANTIC_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-                    print(f"[DEDUP] ðŸ§  Usando algoritmo SEMANTIC com modelo {model_name}")
+                    print(f"[DEDUP] 🧠 Usando algoritmo SEMANTIC com modelo {model_name}")
                     deduped_older = self._semantic_dedupe(
                         older_chunks,
                         threshold,
@@ -2770,8 +2770,8 @@ class Deduplicator:
                     )
                     algo_used = "semantic"
                 except (ImportError, AttributeError) as e:
-                    print(f"[DEDUP] âš ï¸ Fallback para MMR: {e}")
-                    # Fallback para MMR se Haystack nÃ£o disponÃ­vel
+                    print(f"[DEDUP] ⚠️ Fallback para MMR: {e}")
+                    # Fallback para MMR se Haystack não disponível
                     deduped_older = _mmr_select(
                         chunks=older_chunks,
                         k=effective_max,
@@ -2788,14 +2788,14 @@ class Deduplicator:
                     chunks=older_chunks,
                     k=effective_max,
                     lambda_div=getattr(self.valves, "DEDUP_RELEVANCE_WEIGHT", 0.7),
-                    preserve_order=True,  # Preserve a ordem durante a seleÃ§Ã£o
+                    preserve_order=True,  # Preserve a ordem durante a seleção
                     similarity_threshold=threshold,
                     randomize=shuffle_older,
                     reference_chunks=reference_chunks_for_mmr,  # Dedupe older CONTRA recent
                 )
                 algo_used = "mmr"
         except ImportError as e:
-            # Fallback para MMR se biblioteca nÃ£o disponÃ­vel
+            # Fallback para MMR se biblioteca não disponível
             logger.warning(
                 f"Algorithm '{algorithm}' not available ({e}), falling back to MMR"
             )
@@ -2810,7 +2810,7 @@ class Deduplicator:
             )
             algo_used = "mmr_fallback"
 
-        # Combinar: Se reference_first, recent VÃŠM PRIMEIRO
+        # Combinar: Se reference_first, recent VÊM PRIMEIRO
         if reference_first:
             result = (recent_chunks + deduped_older)[:max_chunks]
         else:
@@ -2826,7 +2826,7 @@ class Deduplicator:
             if original_count > 0
             else 0
         )
-        tokens_saved = (original_count - deduped_count) * 30  # ~30 tokens/parÃ¡grafo
+        tokens_saved = (original_count - deduped_count) * 30  # ~30 tokens/parágrafo
 
         # Detectar se houve fallback
         fallback_occurred = algo_used.endswith("_fallback")
@@ -2853,10 +2853,10 @@ class Deduplicator:
         max_chunks: int,
         reference_chunks: List[str] = None,
     ) -> List[str]:
-        """MinHash LSH deduplicaÃ§Ã£o - O(n) - requer datasketch
+        """MinHash LSH deduplicação - O(n) - requer datasketch
 
         Args:
-            reference_chunks: Se fornecido, dedupe chunks CONTRA estes (jÃ¡ no LSH)
+            reference_chunks: Se fornecido, dedupe chunks CONTRA estes (já no LSH)
         """
         try:
             from datasketch import MinHash, MinHashLSH
@@ -2866,7 +2866,7 @@ class Deduplicator:
         lsh = MinHashLSH(threshold=threshold, num_perm=128)
         unique_chunks = []
 
-        # Se hÃ¡ reference_chunks, inserir no LSH primeiro (dedupe CONTRA eles)
+        # Se há reference_chunks, inserir no LSH primeiro (dedupe CONTRA eles)
         if reference_chunks:
             for i, ref_chunk in enumerate(reference_chunks):
                 m = MinHash(num_perm=128)
@@ -2898,7 +2898,7 @@ class Deduplicator:
         max_chunks: int,
         reference_chunks: List[str] = None,
     ) -> List[str]:
-        """TF-IDF + Cosine Similarity deduplicaÃ§Ã£o - requer sklearn
+        """TF-IDF + Cosine Similarity deduplicação - requer sklearn
 
         Args:
             reference_chunks: Se fornecido, dedupe chunks CONTRA estes
@@ -2912,7 +2912,7 @@ class Deduplicator:
         if not chunks:
             return []
 
-        # Se hÃ¡ reference_chunks, processar junto para TF-IDF consistente
+        # Se há reference_chunks, processar junto para TF-IDF consistente
         all_chunks = (reference_chunks or []) + chunks
         ref_count = len(reference_chunks) if reference_chunks else 0
 
@@ -2923,11 +2923,11 @@ class Deduplicator:
         selected = []
         selected_indices = []
 
-        # Se hÃ¡ reference, considerar todos eles como "jÃ¡ selecionados"
+        # Se há reference, considerar todos eles como "já selecionados"
         if ref_count > 0:
             selected_indices = list(range(ref_count))
 
-        # Iterar apenas sobre chunks (nÃ£o reference)
+        # Iterar apenas sobre chunks (não reference)
         for i in range(ref_count, len(all_chunks)):
             chunk_idx_in_original = i - ref_count
             chunk = chunks[chunk_idx_in_original]
@@ -2940,7 +2940,7 @@ class Deduplicator:
                 selected_indices.append(i)
                 continue
 
-            # Calcular similaridade com jÃ¡ selecionados (inclui reference)
+            # Calcular similaridade com já selecionados (inclui reference)
             chunk_vec = tfidf_matrix[i : i + 1]
             if selected_indices:
                 selected_vecs = tfidf_matrix[selected_indices, :]
@@ -2959,7 +2959,7 @@ class Deduplicator:
         if not deduped or not original:
             return deduped
 
-        # Criar mapa: chunk â†’ Ã­ndice original
+        # Criar mapa: chunk → índice original
         original_indices = {chunk: i for i, chunk in enumerate(original)}
 
         # Ordenar deduped pela ordem original
@@ -2974,23 +2974,23 @@ class Deduplicator:
         reference_chunks: List[str] = None,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     ) -> List[str]:
-        """DeduplicaÃ§Ã£o semÃ¢ntica usando embeddings (Haystack)
+        """Deduplicação semântica usando embeddings (Haystack)
         
         Args:
-            chunks: ParÃ¡grafos a dedupear
+            chunks: Parágrafos a dedupear
             threshold: Cosine similarity threshold (0.0-1.0, default 0.85)
-            max_chunks: NÃºmero mÃ¡ximo a retornar
+            max_chunks: Número máximo a retornar
             reference_chunks: Se fornecido, dedupe chunks CONTRA estes
-            model_name: Modelo de embeddings (lightweight por padrÃ£o)
+            model_name: Modelo de embeddings (lightweight por padrão)
         
         Returns:
-            Lista de chunks Ãºnicos semanticamente
+            Lista de chunks únicos semanticamente
             
         Raises:
-            ImportError: Se Haystack nÃ£o estiver disponÃ­vel (fallback para MMR)
+            ImportError: Se Haystack não estiver disponível (fallback para MMR)
         """
         if not HAYSTACK_AVAILABLE:
-            print(f"[DEDUP] DEPENDENCIA FALTANDO: Haystack/sentence-transformers nÃ£o instalado")
+            print(f"[DEDUP] DEPENDENCIA FALTANDO: Haystack/sentence-transformers não instalado")
             print(f"[DEDUP] INSTALAR: pip install haystack sentence-transformers scikit-learn")
             raise ImportError("Haystack/sentence-transformers required for semantic dedup")
         
@@ -3009,7 +3009,7 @@ class Deduplicator:
         else:
             all_docs = docs
         
-        # Embedder (in-memory, sem persistÃªncia)
+        # Embedder (in-memory, sem persistência)
         try:
             embedder = SentenceTransformersDocumentEmbedder(model=model_name)
             embedder.warm_up()
@@ -3025,11 +3025,11 @@ class Deduplicator:
         from sklearn.metrics.pairwise import cosine_similarity
         similarity_matrix = cosine_similarity(embeddings)
         
-        # Selecionar chunks Ãºnicos por clustering simples
+        # Selecionar chunks únicos por clustering simples
         selected_indices = []
         excluded_indices = set()
         
-        # Se hÃ¡ referÃªncias, marcar como jÃ¡ selecionadas
+        # Se há referências, marcar como já selecionadas
         if reference_chunks:
             num_refs = len(reference_chunks)
             excluded_indices.update(range(num_refs))
@@ -3041,7 +3041,7 @@ class Deduplicator:
             if i in excluded_indices:
                 continue
             
-            # Verificar se similar a algum jÃ¡ selecionado ou referÃªncia
+            # Verificar se similar a algum já selecionado ou referência
             is_duplicate = False
             for j in selected_indices + list(range(start_idx)):
                 if i != j and similarity_matrix[i][j] >= threshold:
@@ -3072,7 +3072,7 @@ class Deduplicator:
         Args:
             chunks: Lista de chunks para priorizar
             must_terms: Termos que devem ser preservados (weight: 2.0)
-            key_questions: QuestÃµes-chave para matching (weight: 1.5)
+            key_questions: Questões-chave para matching (weight: 1.5)
             preserve_top_pct: % de chunks para alta prioridade (default: 0.3)
             
         Returns:
@@ -3082,7 +3082,7 @@ class Deduplicator:
             return [], []
             
         if not must_terms and not key_questions:
-            # Se nÃ£o hÃ¡ contexto, retornar chunks recentes como high priority
+            # Se não há contexto, retornar chunks recentes como high priority
             high_count = max(1, int(len(chunks) * preserve_top_pct))
             return [(len(chunks)-high_count+i, ch) for i, ch in enumerate(chunks[-high_count:])], \
                    [(i, ch) for i, ch in enumerate(chunks[:-high_count])]
@@ -3090,7 +3090,7 @@ class Deduplicator:
         # Calcular score para cada chunk
         chunk_scores = []
         for i, chunk in enumerate(chunks):
-            # LLM-first: Deixar o LLM decidir qualidade atravÃ©s do scoring inteligente
+            # LLM-first: Deixar o LLM decidir qualidade através do scoring inteligente
             chunk_lower = chunk.lower()
             score = 0.0
             must_score = 0.0
@@ -3101,16 +3101,16 @@ class Deduplicator:
                 for term in must_terms:
                     term_lower = term.lower()
                     
-                    # Ignorar termos geogrÃ¡ficos usando detecÃ§Ã£o estrutural
+                    # Ignorar termos geográficos usando detecção estrutural
                     if _is_geographic_term(term):
                         if getattr(self.valves, "VERBOSE_DEBUG", False):
                             print(f"[CONTEXT_AWARE] Skipping geo term: '{term}'")
                         continue
                     
-                    # Contar ocorrÃªncias (case-insensitive)
+                    # Contar ocorrências (case-insensitive)
                     count = chunk_lower.count(term_lower)
                     
-                    # LLM-first: Bonus para co-ocorrÃªncia com contexto setorial
+                    # LLM-first: Bonus para co-ocorrência com contexto setorial
                     setorial_bonus = 0.0
                     if any(setor in chunk_lower for setor in [
                         "executive search", "headhunting", "recrutamento executivo", 
@@ -3125,7 +3125,7 @@ class Deduplicator:
             if key_questions:
                 for question in key_questions:
                     question_lower = question.lower()
-                    # Verificar se chunk contÃ©m palavras-chave da questÃ£o
+                    # Verificar se chunk contém palavras-chave da questão
                     question_words = set(question_lower.split())
                     chunk_words = set(chunk_lower.split())
                     overlap = len(question_words.intersection(chunk_words))
@@ -3133,7 +3133,7 @@ class Deduplicator:
                         q_score = overlap * 1.5
                         question_score += q_score
             
-            # 3. PosiÃ§Ã£o no documento (recent > old, weight: 0.1)
+            # 3. Posição no documento (recent > old, weight: 0.1)
             position_score = (i / len(chunks)) * 0.1
             score = must_score + question_score + position_score
             
@@ -3162,7 +3162,7 @@ class Deduplicator:
         threshold: float
     ) -> List[str]:
         """
-        MÃ©todo auxiliar para dedupear chunks (usado pelo context-aware).
+        Método auxiliar para dedupear chunks (usado pelo context-aware).
         Aplica o algoritmo especificado aos chunks fornecidos.
         """
         if not chunks or max_chunks <= 0:
@@ -3178,7 +3178,7 @@ class Deduplicator:
                 try:
                     return self._semantic_dedupe(chunks, threshold, max_chunks, model_name=model_name)
                 except ImportError as e:
-                    print(f"[DEDUP] Semantic unavailable: {e} â†’ fallback to MMR")
+                    print(f"[DEDUP] Semantic unavailable: {e} → fallback to MMR")
                     return _mmr_select(chunks, max_chunks, similarity_threshold=threshold)
             else:  # default to mmr
                 return _mmr_select(chunks, max_chunks, similarity_threshold=threshold)
@@ -3217,7 +3217,7 @@ class AsyncOpenAIClient:
                 self._client = httpx.AsyncClient(
                     timeout=httpx.Timeout(
                         240.0, connect=10.0, read=float(read_timeout)
-                    ),  # Increased: 120â†’240, 5â†’10, 115â†’180
+                    ),  # Increased: 120→240, 5→10, 115→180
                     limits=httpx.Limits(
                         max_keepalive_connections=10, max_connections=20
                     ),
@@ -3239,7 +3239,7 @@ class AsyncOpenAIClient:
         client = self._ensure_client()
         url = build_chat_endpoint(self.base_url)
 
-        # Log do tamanho do prompt ANTES de enviar (debug crÃ­tico para truncamento)
+        # Log do tamanho do prompt ANTES de enviar (debug crítico para truncamento)
         prompt_len = len(prompt)
         prompt_tokens_est = prompt_len // 4
         if prompt_tokens_est > 12000:
@@ -3280,7 +3280,7 @@ class AsyncOpenAIClient:
             "Content-Type": "application/json",
         }
 
-        # âœ… FIX TIMEOUT HIERARCHY: Unificar cliente/per-request usando MAX
+        # ✅ FIX TIMEOUT HIERARCHY: Unificar cliente/per-request usando MAX
         default_read = (
             getattr(self.valves, "HTTPX_READ_TIMEOUT", 180)
             if hasattr(self, "valves")
@@ -3289,7 +3289,7 @@ class AsyncOpenAIClient:
         request_timeout = float(gen_kwargs.get("request_timeout", default_read))
         effective_read_timeout = max(default_read, request_timeout, 60.0)
 
-        # âœ… Criar timeout per-request (sobrescreve timeout do cliente)
+        # ✅ Criar timeout per-request (sobrescreve timeout do cliente)
         per_request_timeout = httpx.Timeout(
             240.0, connect=10.0, read=effective_read_timeout
         )
@@ -3300,7 +3300,7 @@ class AsyncOpenAIClient:
             )
 
         try:
-            # âœ… Async HTTP POST com timeout PER-REQUEST explÃ­cito
+            # ✅ Async HTTP POST com timeout PER-REQUEST explícito
             resp = await client.post(
                 url, json=body, headers=headers, timeout=per_request_timeout
             )
@@ -3344,22 +3344,22 @@ class AnalystLLM:
 
     def __init__(self, valves):
         self.valves = valves
-        # Usar modelo especÃ­fico se configurado, senÃ£o usa modelo padrÃ£o
+        # Usar modelo específico se configurado, senão usa modelo padrão
         model = valves.LLM_MODEL_ANALYST or valves.LLM_MODEL
         self.model_name = model
         self.llm = _get_llm(valves, model_name=model)
-        # Base kwargs: serÃ£o filtrados por get_safe_llm_params (GPT-5 nÃ£o aceita temperature)
+        # Base kwargs: serão filtrados por get_safe_llm_params (GPT-5 não aceita temperature)
         self.generation_kwargs = {"temperature": valves.LLM_TEMPERATURE}
 
     async def run(
         self, query: str, accumulated_context: str, phase_context: Dict = None
     ) -> Dict[str, Any]:
-        """Analisa contexto acumulado COMPLETO (todas as fases atÃ© agora)"""
+        """Analisa contexto acumulado COMPLETO (todas as fases até agora)"""
 
-        # ðŸ”´ DEFESA P0: Validar inputs e estado do LLM
+        # 🔴 DEFESA P0: Validar inputs e estado do LLM
         if not self.llm:
-            logger.error("[ANALYST] LLM nÃ£o configurado")
-            return {"summary": "", "facts": [], "lacunas": ["LLM nÃ£o configurado"]}
+            logger.error("[ANALYST] LLM não configurado")
+            return {"summary": "", "facts": [], "lacunas": ["LLM não configurado"]}
 
         if not accumulated_context or len(accumulated_context.strip()) == 0:
             logger.warning("[ANALYST] Contexto vazio - sem dados para analisar")
@@ -3370,11 +3370,11 @@ class AnalystLLM:
             }
 
         try:
-            # Extrair informaÃ§Ãµes da fase atual
+            # Extrair informações da fase atual
             phase_info = ""
             if phase_context:
                 phase_name = phase_context.get("name", "Fase atual")
-                # Contract usa "objetivo" (PT), nÃ£o "objective" (EN)
+                # Contract usa "objetivo" (PT), não "objective" (EN)
                 phase_objective = phase_context.get("objetivo") or phase_context.get(
                     "objective", ""
                 )
@@ -3383,7 +3383,7 @@ class AnalystLLM:
             sys_prompt = _build_analyst_prompt(query, phase_context)
 
             user_prompt = f"""**Objetivo da Fase:** {query}{phase_info}
-**Contexto Acumulado (todas as fases atÃ© agora):**
+**Contexto Acumulado (todas as fases até agora):**
 {accumulated_context}"""
 
             timeout_analyst = min(self.valves.LLM_TIMEOUT_ANALYST, 120)  # Cap at 120s to prevent truncation
@@ -3392,8 +3392,8 @@ class AnalystLLM:
                     f"[DEBUG][ANALYST] Using timeout: {timeout_analyst}s (context: {len(accumulated_context):,} chars)"
                 )
             # Use retry function if enabled, otherwise single attempt
-            # Filtrar parÃ¢metros incompatÃ­veis com GPT-5/O1
-            # âœ… FORCE JSON MODE for Analyst robustness
+            # Filtrar parâmetros incompatíveis com GPT-5/O1
+            # ✅ FORCE JSON MODE for Analyst robustness
             base_params = {
                 "temperature": self.generation_kwargs.get("temperature", 0.2),
                 "response_format": {"type": "json_object"}  # FORCE JSON MODE
@@ -3430,19 +3430,19 @@ class AnalystLLM:
                     f"[DEBUG][ANALYST] Analyst raw reply preview: {raw_reply[:200]}..."
                 )
 
-            # ðŸ”§ FIX v2: Strip agressivo para remover \n " no inÃ­cio (erro comum do LLM)
+            # 🔧 FIX v2: Strip agressivo para remover \n " no início (erro comum do LLM)
             cleaned_reply = raw_reply.strip()
 
-            # Remover newlines e whitespace no inÃ­cio recursivamente
+            # Remover newlines e whitespace no início recursivamente
             while cleaned_reply and cleaned_reply[0] in "\n\r\t ":
                 cleaned_reply = cleaned_reply[1:]
 
-            # Se comeÃ§a com " mas nÃ£o Ã© JSON vÃ¡lido, remover aspas soltas
+            # Se começa com " mas não é JSON válido, remover aspas soltas
             if cleaned_reply.startswith('"') and not cleaned_reply.startswith('{"'):
-                # Remover todas as aspas duplas consecutivas no inÃ­cio
+                # Remover todas as aspas duplas consecutivas no início
                 cleaned_reply = cleaned_reply.lstrip('"').lstrip()
 
-            # Se ainda nÃ£o comeÃ§a com { ou [, tentar envolver em objeto
+            # Se ainda não começa com { ou [, tentar envolver em objeto
             if (
                 cleaned_reply
                 and not cleaned_reply.startswith("{")
@@ -3466,12 +3466,12 @@ class AnalystLLM:
 
                 class FactModel(BaseModel):
                     texto: str
-                    confianÃ§a: Literal["alta", "mÃ©dia", "baixa"]
+                    confiança: Literal["alta", "média", "baixa"]
                     evidencias: Optional[List[EvidenceModel]] = []
 
                 class SelfAssessmentModel(BaseModel):
                     coverage_score: float
-                    confidence: Literal["alta", "mÃ©dia", "baixa"]
+                    confidence: Literal["alta", "média", "baixa"]
                     gaps_critical: bool
                     suggest_refine: bool
                     suggest_pivot: bool
@@ -3527,7 +3527,7 @@ class AnalystLLM:
                     if getattr(self.valves, "VERBOSE_DEBUG", False):
                         print("[DEBUG] Analyst reparsed successfully with mode='soft'")
 
-            # Re-ask Ãºnico e curto exigindo JSON vÃ¡lido
+            # Re-ask único e curto exigindo JSON válido
             try_reask = not parsed
             if try_reask:
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
@@ -3536,24 +3536,24 @@ class AnalystLLM:
                     )
 
                 reask_instr = (
-                    "RETORNE APENAS JSON PURO (sem markdown, sem explicaÃ§Ã£o, sem texto extra).\n\n"
-                    "SCHEMA OBRIGATÃ“RIO:\n"
+                    "RETORNE APENAS JSON PURO (sem markdown, sem explicação, sem texto extra).\n\n"
+                    "SCHEMA OBRIGATÓRIO:\n"
                     "{\n"
                     '  "summary": "string resumo",\n'
-                    '  "facts": [{ "texto": "fato X", "confianÃ§a": "alta|mÃ©dia|baixa", "evidencias": [{"url":"...","trecho":"..."}] }],\n'
+                    '  "facts": [{ "texto": "fato X", "confiança": "alta|média|baixa", "evidencias": [{"url":"...","trecho":"..."}] }],\n'
                     '  "lacunas": ["lacuna 1", "lacuna 2"],\n'
-                    '  "self_assessment": { "coverage_score": 0.7, "confidence": "mÃ©dia", "gaps_critical": true, "suggest_refine": false, "suggest_pivot": true, "reasoning": "brevemente por quÃª" }\n'
+                    '  "self_assessment": { "coverage_score": 0.7, "confidence": "média", "gaps_critical": true, "suggest_refine": false, "suggest_pivot": true, "reasoning": "brevemente por quê" }\n'
                     "}\n\n"
-                    "âš ï¸ IMPORTANTE:\n"
+                    "⚠️ IMPORTANTE:\n"
                     "- coverage_score: 0.0-1.0 (quanto % do objetivo foi coberto)\n"
                     "- gaps_critical: True se lacunas impedem resposta ao objetivo\n"
-                    "- suggest_pivot: True se lacuna precisa de Ã¢ngulo/temporal diferente\n\n"
-                    "NÃƒO adicione comentÃ¡rios, NÃƒO use ```json, NÃƒO explique nada fora do JSON."
+                    "- suggest_pivot: True se lacuna precisa de ângulo/temporal diferente\n\n"
+                    "NÃO adicione comentários, NÃO use ```json, NÃO explique nada fora do JSON."
                 )
                 limited_context = accumulated_context[:20000]
                 reask_prompt = f"{_build_analyst_prompt(query, phase_context)}\n\n{reask_instr}\n\n**Objetivo da Fase:** {query}{phase_info}\n\n**Contexto Acumulado:**\n{limited_context}"
 
-                # ForÃ§ar JSON response_format quando suportado (evitar para modelos que nÃ£o aceitam)
+                # Forçar JSON response_format quando suportado (evitar para modelos que não aceitam)
                 base_reask = {"temperature": 0.1}
                 if not any(x in self.model_name.lower() for x in ["o1", "o3", "gpt-5"]):
                     base_reask["response_format"] = {"type": "json_object"}
@@ -3586,7 +3586,7 @@ class AnalystLLM:
                     if getattr(self.valves, "VERBOSE_DEBUG", False):
                         print("[DEBUG] Analyst parsed successfully on re-ask")
 
-            # ValidaÃ§Ã£o de evidÃªncia rica (P0.4) - TEMPORARIAMENTE RELAXADA PARA DEBUG
+            # Validação de evidência rica (P0.4) - TEMPORARIAMENTE RELAXADA PARA DEBUG
             if parsed:
                 facts_before_validation = parsed.get("facts", [])
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
@@ -3594,7 +3594,7 @@ class AnalystLLM:
                         f"[DEBUG] Facts before validation: {len(facts_before_validation)}"
                     )
 
-                # Log detalhado de cada fato antes da validaÃ§Ã£o
+                # Log detalhado de cada fato antes da validação
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     for i, fact in enumerate(facts_before_validation[:3]):
                         print(f"[DEBUG] Fact {i}: {fact}")
@@ -3604,8 +3604,8 @@ class AnalystLLM:
                     print(f"[DEBUG] Analyst validation result: {validated}")
 
                 if not validated["valid"]:
-                    # v4.6: ValidaÃ§Ã£o RE-HABILITADA (era temporariamente relaxada para debug)
-                    logger.warning(f"[ANALYST] Output invÃ¡lido: {validated['reason']}")
+                    # v4.6: Validação RE-HABILITADA (era temporariamente relaxada para debug)
+                    logger.warning(f"[ANALYST] Output inválido: {validated['reason']}")
                     if getattr(self.valves, "VERBOSE_DEBUG", False):
                         print(
                             f"[WARNING] Analyst output invalid: {validated['reason']}"
@@ -3640,63 +3640,63 @@ class AnalystLLM:
         return parsed or {"summary": "", "facts": [], "lacunas": []}
 
     def _validate_analyst_output(self, parsed):
-        """Valida saÃ­da do Analyst - VERSÃƒO COMPLETA RE-HABILITADA (v4.6)
+        """Valida saída do Analyst - VERSÃO COMPLETA RE-HABILITADA (v4.6)
 
-        ValidaÃ§Ãµes:
-        1. Facts sÃ£o dicts com campos obrigatÃ³rios
-        2. EvidÃªncias tÃªm URL vÃ¡lida
+        Validações:
+        1. Facts são dicts com campos obrigatórios
+        2. Evidências têm URL válida
         3. Self-assessment presente e bem-formado
         """
         facts = parsed.get("facts", [])
 
-        # Sem fatos NÃƒO Ã© vÃ¡lido: retorna lacuna explicativa
+        # Sem fatos NÃO é válido: retorna lacuna explicativa
         if not facts:
-            return {"valid": False, "reason": "Nenhum fato extraÃ­do (contexto vazio ou irrelevante)"}
+            return {"valid": False, "reason": "Nenhum fato extraído (contexto vazio ou irrelevante)"}
 
-        # ValidaÃ§Ã£o de estrutura dos fatos
+        # Validação de estrutura dos fatos
         for i, fact in enumerate(facts):
             if not isinstance(fact, dict):
-                return {"valid": False, "reason": f"Fato {i} nÃ£o Ã© dict"}
+                return {"valid": False, "reason": f"Fato {i} não é dict"}
 
-            # Campos obrigatÃ³rios
+            # Campos obrigatórios
             if "texto" not in fact:
                 return {"valid": False, "reason": f"Fato {i} sem campo 'texto'"}
 
             if not fact.get("texto") or not fact["texto"].strip():
                 return {"valid": False, "reason": f"Fato {i} com texto vazio"}
 
-            # ConfianÃ§a obrigatÃ³ria
-            if "confianÃ§a" not in fact:
-                return {"valid": False, "reason": f"Fato {i} sem campo 'confianÃ§a'"}
+            # Confiança obrigatória
+            if "confiança" not in fact:
+                return {"valid": False, "reason": f"Fato {i} sem campo 'confiança'"}
 
-            if fact["confianÃ§a"] not in ["alta", "mÃ©dia", "baixa"]:
+            if fact["confiança"] not in ["alta", "média", "baixa"]:
                 return {
                     "valid": False,
-                    "reason": f"Fato {i} com confianÃ§a invÃ¡lida: {fact['confianÃ§a']}",
+                    "reason": f"Fato {i} com confiança inválida: {fact['confiança']}",
                 }
 
-            # EvidÃªncias (opcional mas recomendado)
+            # Evidências (opcional mas recomendado)
             evidencias = fact.get("evidencias", [])
             if evidencias:
                 for j, ev in enumerate(evidencias):
                     if not isinstance(ev, dict):
                         return {
                             "valid": False,
-                            "reason": f"Fato {i}, evidÃªncia {j} nÃ£o Ã© dict",
+                            "reason": f"Fato {i}, evidência {j} não é dict",
                         }
 
                     if "url" not in ev:
                         return {
                             "valid": False,
-                            "reason": f"Fato {i}, evidÃªncia {j} sem URL",
+                            "reason": f"Fato {i}, evidência {j} sem URL",
                         }
 
-        # ValidaÃ§Ã£o de self_assessment (obrigatÃ³rio)
+        # Validação de self_assessment (obrigatório)
         sa = parsed.get("self_assessment", {})
         if not sa:
             return {"valid": False, "reason": "self_assessment ausente"}
 
-        # Campos obrigatÃ³rios de self_assessment
+        # Campos obrigatórios de self_assessment
         required_sa_fields = ["coverage_score", "confidence", "gaps_critical"]
         for field in required_sa_fields:
             if field not in sa:
@@ -3710,14 +3710,14 @@ class AnalystLLM:
         if not isinstance(coverage, (int, float)) or not (0.0 <= coverage <= 1.0):
             return {
                 "valid": False,
-                "reason": f"coverage_score invÃ¡lido: {coverage} (deve ser 0.0-1.0)",
+                "reason": f"coverage_score inválido: {coverage} (deve ser 0.0-1.0)",
             }
 
         # Validar confidence
-        if sa.get("confidence") not in ["alta", "mÃ©dia", "baixa"]:
+        if sa.get("confidence") not in ["alta", "média", "baixa"]:
             return {
                 "valid": False,
-                "reason": f"confidence invÃ¡lida: {sa.get('confidence')}",
+                "reason": f"confidence inválida: {sa.get('confidence')}",
             }
 
         # Validar gaps_critical
@@ -3736,15 +3736,15 @@ def _build_seed_query_rules() -> str:
 **SEED_QUERY (3-8 palavras, SEM operadores):**
 - Estrutura: TEMA_CENTRAL + ASPECTO + GEO
 - Se 1-3 entidades: incluir TODOS os nomes na seed
-- Se 4+ entidades: seed genÃ©rica + TODOS em must_terms
-- @noticias: adicionar 3-6 palavras especÃ­ficas (eventos, tipos, aÃ§Ãµes)
+- Se 4+ entidades: seed genérica + TODOS em must_terms
+- @noticias: adicionar 3-6 palavras específicas (eventos, tipos, ações)
 
 Exemplos:
-âœ… "RedeDr SÃ³ SaÃºde oncologia Brasil" (1-3 entidades)
-âœ… "volume autos elÃ©tricos Brasil" (4+ entidades)
-âœ… "@noticias recalls veÃ­culos elÃ©tricos Brasil" (breaking news)
-âŒ "volume fees Brasil" (falta tema!)
-âŒ "buscar dados verificÃ¡veis" (genÃ©rico demais)
+✅ "RedeDr Só Saúde oncologia Brasil" (1-3 entidades)
+✅ "volume autos elétricos Brasil" (4+ entidades)
+✅ "@noticias recalls veículos elétricos Brasil" (breaking news)
+❌ "volume fees Brasil" (falta tema!)
+❌ "buscar dados verificáveis" (genérico demais)
 """
 
 
@@ -3755,13 +3755,13 @@ def _build_time_windows_table() -> str:
 
 | Recency | Uso | Exemplo |
 |---------|-----|---------|
-| **90d** | Breaking news explÃ­cito | "Ãºltimos 90 dias", "breaking news" |
-| **1y** | TendÃªncias/estado atual (DEFAULT news) | "eventos recentes", "aquisiÃ§Ãµes ano" |
-| **3y** | Panorama/contexto histÃ³rico | "evoluÃ§Ã£o setorial", "baseline" |
-**Regra PrÃ¡tica:**
-- News SEM prazo explÃ­cito â†’ 1y (captura 12 meses)
-- News COM "90 dias" â†’ 90d (breaking only)
-- Estudos de mercado â†’ 3y (contexto) + 1y (tendÃªncias) [OBRIGATÃ“RIO]
+| **90d** | Breaking news explícito | "últimos 90 dias", "breaking news" |
+| **1y** | Tendências/estado atual (DEFAULT news) | "eventos recentes", "aquisições ano" |
+| **3y** | Panorama/contexto histórico | "evolução setorial", "baseline" |
+**Regra Prática:**
+- News SEM prazo explícito → 1y (captura 12 meses)
+- News COM "90 dias" → 90d (breaking only)
+- Estudos de mercado → 3y (contexto) + 1y (tendências) [OBRIGATÓRIO]
 """
 def _extract_json_from_text(text: str) -> Optional[dict]:
     """LEGACY WRAPPER: Delega para parse_json_resilient(mode='balanced')"""
@@ -3771,7 +3771,7 @@ def _patch_seed_if_needed(
 ) -> None:
     """Patch seed_query se estiver muito magra (modo relax apenas)"""
     if strict_mode:
-        return  # Modo strict: nÃ£o patch
+        return  # Modo strict: não patch
 
     obj = phase.get("objective") or phase.get("objetivo") or ""
     sq = phase.get("seed_query", "")
@@ -3779,24 +3779,24 @@ def _patch_seed_if_needed(
     if not obj or not sq:
         return
 
-    # Verifica se seed_query contÃ©m algum token significativo do objetivo
+    # Verifica se seed_query contém algum token significativo do objetivo
     obj_tokens = [t for t in obj.lower().split() if len(t) > 4]
     sq_lower = sq.lower()
 
     has_obj_token = any(t in sq_lower for t in obj_tokens)
 
     if not has_obj_token:
-        # Seed nÃ£o tem nenhum token do objetivo - patch
+        # Seed não tem nenhum token do objetivo - patch
         k = _first_content_token(obj)
         if k and k not in sq_lower:
             phase["seed_query"] = f"{sq} {k}".strip()
             if metrics is not None:
                 metrics["seed_patched_count"] = metrics.get("seed_patched_count", 0) + 1
-            logger.info(f"[SEED] Patched seed_query '{sq}' â†’ '{phase['seed_query']}'")
+            logger.info(f"[SEED] Patched seed_query '{sq}' → '{phase['seed_query']}'")
 
 
 def _check_mece_basic(fases: List[dict], key_questions: List[str]) -> List[str]:
-    """Verifica MECE bÃ¡sico: key_questions Ã³rfÃ£s (sem cobertura)"""
+    """Verifica MECE básico: key_questions órfãs (sem cobertura)"""
     if not key_questions:
         return []
 
@@ -3823,10 +3823,10 @@ def _append_phase(contract: dict, candidate: dict) -> None:
     if "objective" not in candidate and "objetivo" in candidate:
         candidate["objective"] = candidate.pop("objetivo")
 
-    # Sanity checks bÃ¡sicos
+    # Sanity checks básicos
     seed_query = candidate.get("seed_query", "")
     if not (3 <= len(seed_query.split()) <= 8):
-        logger.warning(f"[APPEND] seed_query invÃ¡lida: {seed_query}")
+        logger.warning(f"[APPEND] seed_query inválida: {seed_query}")
         return
 
     seed_core = candidate.get("seed_core", "")
@@ -3840,7 +3840,7 @@ def _append_phase(contract: dict, candidate: dict) -> None:
 
 
 def _calc_entity_coverage(fases: List[dict], entities: List[str]) -> float:
-    """Calcula a % de fases que contÃªm pelo menos uma entidade em must_terms"""
+    """Calcula a % de fases que contêm pelo menos uma entidade em must_terms"""
     if not entities or not fases:
         return 1.0
 
@@ -3855,7 +3855,7 @@ def _calc_entity_coverage(fases: List[dict], entities: List[str]) -> float:
 
 
 def _list_missing_entity_phases(fases: List[dict], entities: List[str]) -> List[str]:
-    """Lista as fases que NÃƒO contÃªm nenhuma entidade em must_terms"""
+    """Lista as fases que NÃO contêm nenhuma entidade em must_terms"""
     if not entities:
         return []
 
@@ -3920,23 +3920,23 @@ def _render_contract(contract: Dict[str, Any]) -> str:
     """Render contract as markdown for display"""
     fases = contract.get("fases", [])
     num_fases = len(fases)
-    lines = [f"## ðŸ“‹ Plano â€“ {num_fases} Fases\n"]
+    lines = [f"## 📋 Plano – {num_fases} Fases\n"]
 
     intent = contract.get("intent", "")
     if intent:
-        lines.append(f"**ðŸŽ¯ Objetivo:** {intent}\n")
+        lines.append(f"**🎯 Objetivo:** {intent}\n")
 
     # Mostrar entidades
     entities = contract.get("entities", {})
     if entities.get("canonical"):
-        lines.append(f"**ðŸ·ï¸ Entidades:** {', '.join(entities['canonical'])}")
+        lines.append(f"**🏷️ Entidades:** {', '.join(entities['canonical'])}")
         if entities.get("aliases"):
-            lines.append(f"**ðŸ”— Aliases:** {', '.join(entities['aliases'])}")
+            lines.append(f"**🔗 Aliases:** {', '.join(entities['aliases'])}")
         lines.append("")
 
-    lines.append(f"**ðŸ“ Fases:**\n")
+    lines.append(f"**📍 Fases:**\n")
     for i, fase in enumerate(fases, 1):
-        lines.append(f"### Fase {i}/{num_fases} â€“ {fase.get('name', 'N/A')}")
+        lines.append(f"### Fase {i}/{num_fases} – {fase.get('name', 'N/A')}")
         lines.append(f"**Objetivo:** {fase.get('objetivo', 'N/A')}")
         # Exibir seed_core (query rica para Discovery) em vez de seed_query
         seed_core = fase.get("seed_core", "N/A")
@@ -3945,31 +3945,31 @@ def _render_contract(contract: Dict[str, Any]) -> str:
         # Mostrar must_terms
         must_terms = fase.get("must_terms", [])
         if must_terms:
-            lines.append(f"**âœ… Must:** {', '.join(must_terms)}")
+            lines.append(f"**✅ Must:** {', '.join(must_terms)}")
 
         # Mostrar time hint e source bias
         time_hint = fase.get("time_hint", {})
         source_bias = fase.get("source_bias", [])
         if time_hint:
-            lines.append(f"**â° Tempo:** {time_hint.get('recency', 'N/A')}")
+            lines.append(f"**⏰ Tempo:** {time_hint.get('recency', 'N/A')}")
         if source_bias:
-            lines.append(f"**ðŸ“Š Fontes:** {' > '.join(source_bias)}")
+            lines.append(f"**📊 Fontes:** {' > '.join(source_bias)}")
 
         lines.append("")
 
     # Mostrar quality rails
     quality_rails = contract.get("quality_rails", {})
     if quality_rails:
-        lines.append("**ðŸ›¡ï¸ Quality Rails:**")
+        lines.append("**🛡️ Quality Rails:**")
         lines.append(
-            f"- MÃ­nimo {quality_rails.get('min_unique_domains', 'N/A')} domÃ­nios Ãºnicos"
+            f"- Mínimo {quality_rails.get('min_unique_domains', 'N/A')} domínios únicos"
         )
         if quality_rails.get("need_official_or_two_independent"):
-            lines.append("- Fonte oficial OU â‰¥2 domÃ­nios independentes por fase")
+            lines.append("- Fonte oficial OU ≥2 domínios independentes por fase")
         lines.append("")
 
     lines.append("---")
-    lines.append(f"**ðŸ’¡ Responda:** **siga** | **continue**")
+    lines.append(f"**💡 Responda:** **siga** | **continue**")
     return "\n".join(lines)
 
 
@@ -3989,16 +3989,16 @@ def _first_content_token(text: str) -> str:
 def _build_entity_rules_compact() -> str:
     """Regras de entidades (v4.8 - Entity-Centric Policy)"""
     return """
-**POLÃTICA ENTITY-CENTRIC (v4.8):**
+**POLÍTICA ENTITY-CENTRIC (v4.8):**
 
 | Quantidade | Mode | Seed_query | Must_terms (por fase) | Exemplo |
 |------------|------|------------|----------------------|---------|
-| 1-3 | ðŸŽ¯ FOCADO | Incluir TODOS | **TODAS as fases** devem ter | "RedeDr SÃ³ SaÃºde oncologia BR" |
-| 4-6 | ðŸ“Š DISTRIBUÃDO | GenÃ©rica | industry:â‰¤3, profiles/news:TODAS | seed:"saÃºde digital BR", must:["RedeDr","DocTech","Hospital X"] |
-| 7+ | ðŸ“Š DISTRIBUÃDO | GenÃ©rica | industry:â‰¤3, profiles/news:TODAS | must:["Magalu","Via","Americanas",...] |
+| 1-3 | 🎯 FOCADO | Incluir TODOS | **TODAS as fases** devem ter | "RedeDr Só Saúde oncologia BR" |
+| 4-6 | 📊 DISTRIBUÍDO | Genérica | industry:≤3, profiles/news:TODAS | seed:"saúde digital BR", must:["RedeDr","DocTech","Hospital X"] |
+| 7+ | 📊 DISTRIBUÍDO | Genérica | industry:≤3, profiles/news:TODAS | must:["Magalu","Via","Americanas",...] |
 
-**Cobertura obrigatÃ³ria (1-3 entidades): â‰¥70% das fases devem incluir as entidades em must_terms**
-**RazÃ£o:** Discovery Selector usa must_terms para priorizaÃ§Ã£o + Analyst precisa de contexto focado
+**Cobertura obrigatória (1-3 entidades): ≥70% das fases devem incluir as entidades em must_terms**
+**Razão:** Discovery Selector usa must_terms para priorização + Analyst precisa de contexto focado
 """
 
 
@@ -4013,79 +4013,79 @@ def _build_planner_prompt(
         from datetime import datetime
         current_date = datetime.now().strftime("%Y-%m-%d")
 
-    date_context = f"DATA ATUAL: {current_date}\n(Use esta data ao planejar fases de notÃ­cias/eventos recentes. NÃ£o sugira anos passados como '2024' se estamos em 2025.)\n\n"
+    date_context = f"DATA ATUAL: {current_date}\n(Use esta data ao planejar fases de notícias/eventos recentes. Não sugira anos passados como '2024' se estamos em 2025.)\n\n"
 
-    # OrientaÃ§Ã£o especÃ­fica por perfil detectado (compacta)
+    # Orientação específica por perfil detectado (compacta)
     profile_guidance = ""
     if detected_context:
         perfil = detected_context.get("perfil_sugerido", "")
         setor = detected_context.get("setor_principal", "")
-        # Blocos curtos por perfil (2â€“3 bullets). Se jÃ¡ houver key_questions/entities, manter guidance minimalista
+        # Blocos curtos por perfil (2–3 bullets). Se já houver key_questions/entities, manter guidance minimalista
         short_guidance = {
             "company_profile": (
-                f"Perfil mercado ({setor}): use 3y para panorama, 1y para tendÃªncias, 90d sÃ³ para eventos pontuais. Priorize fontes oficiais/primÃ¡rias."
+                f"Perfil mercado ({setor}): use 3y para panorama, 1y para tendências, 90d só para eventos pontuais. Priorize fontes oficiais/primárias."
             ),
             "technical_spec": (
-                f"Perfil tÃ©cnico ({setor}): panorama 3y, docs atuais 1y, releases 90d. Priorize docs oficiais/RFCs/repos."
+                f"Perfil técnico ({setor}): panorama 3y, docs atuais 1y, releases 90d. Priorize docs oficiais/RFCs/repos."
             ),
             "regulation_review": (
-                f"Perfil regulatÃ³rio ({setor}): marco vigente 3y, compliance 1y, mudanÃ§as 90d. Priorize gov/oficial."
+                f"Perfil regulatório ({setor}): marco vigente 3y, compliance 1y, mudanças 90d. Priorize gov/oficial."
             ),
             "literature_review": (
-                f"Perfil acadÃªmico ({setor}): fundamentos 3y+, estado da arte 1â€“3y, papers 1y. Priorize scholar/periÃ³dicos."
+                f"Perfil acadêmico ({setor}): fundamentos 3y+, estado da arte 1–3y, papers 1y. Priorize scholar/periódicos."
             ),
             "history_review": (
-                f"Perfil histÃ³rico ({setor}): contexto 3y+, evoluÃ§Ã£o 3y, anÃ¡lise atual 1y. Priorize arquivos/oficial/academia."
+                f"Perfil histórico ({setor}): contexto 3y+, evolução 3y, análise atual 1y. Priorize arquivos/oficial/academia."
             ),
         }
         pg = short_guidance.get(perfil, "")
         if pg:
             profile_guidance = pg + "\n\n"
 
-    # Usar key_questions e entities do detected_context (se disponÃ­veis) - versÃ£o compacta
+    # Usar key_questions e entities do detected_context (se disponíveis) - versão compacta
     cot_preamble = ""
     if detected_context:
-        # Usar as informaÃ§Ãµes do Context Detection (CoT jÃ¡ foi feito lÃ¡)
+        # Usar as informações do Context Detection (CoT já foi feito lá)
         key_q = detected_context.get("key_questions", [])
         entities = detected_context.get("entities_mentioned", [])
         objectives = detected_context.get("research_objectives", [])
 
         if key_q or entities or objectives:
-            # SEMPRE mostrar key_questions e entities explicitamente (nÃ£o depender de reasoning_summary)
+            # SEMPRE mostrar key_questions e entities explicitamente (não depender de reasoning_summary)
             cot_preamble = f"""
-ðŸ“‹ **CONTEXTO JÃ ANALISADO (CONTEXT-LOCK):**
-âœ… {len(key_q)} key questions identificadas
-âœ… {len(entities)} entidades especÃ­ficas detectadas  
-âœ… {len(objectives)} objetivos de pesquisa definidos
-âœ… Perfil: {detected_context.get('perfil_sugerido', 'N/A')}
-ðŸ”’ **PAYLOAD DO ESTRATEGISTA (USE EXCLUSIVAMENTE, NÃƒO RE-INFIRA):**
+📋 **CONTEXTO JÁ ANALISADO (CONTEXT-LOCK):**
+✅ {len(key_q)} key questions identificadas
+✅ {len(entities)} entidades específicas detectadas  
+✅ {len(objectives)} objetivos de pesquisa definidos
+✅ Perfil: {detected_context.get('perfil_sugerido', 'N/A')}
+🔒 **PAYLOAD DO ESTRATEGISTA (USE EXCLUSIVAMENTE, NÃO RE-INFIRA):**
 KEY_QUESTIONS={json.dumps(key_q[:10], ensure_ascii=False)}
 ENTITIES_CANONICAL={json.dumps(entities[:15], ensure_ascii=False)}
 RESEARCH_OBJECTIVES={json.dumps(objectives[:10], ensure_ascii=False)}
 LANG_BIAS={detected_context.get('language_bias', ['pt-BR', 'en'])}
 GEO_BIAS={detected_context.get('geo_bias', ['BR', 'global'])}
-âš ï¸ **INSTRUÃ‡Ã•ES CRÃTICAS:**
-1. Crie fases que RESPONDAM Ã s KEY_QUESTIONS listadas acima
+⚠️ **INSTRUÇÕES CRÍTICAS:**
+1. Crie fases que RESPONDAM às KEY_QUESTIONS listadas acima
 2. Inclua ENTITIES_CANONICAL nos must_terms das fases apropriadas
 3. Alinhe os objectives das fases aos RESEARCH_OBJECTIVES do estrategista
-4. NÃƒO introduza novas entidades nÃ£o listadas acima
-5. NÃƒO altere ou re-interprete os objetivos
+4. NÃO introduza novas entidades não listadas acima
+5. NÃO altere ou re-interprete os objetivos
 6. Use SOMENTE os dados do payload acima
 """
 
-    # Chain of Thought: SEMPRE usar informaÃ§Ãµes do Context Detection (nÃ£o extrair novamente)
+    # Chain of Thought: SEMPRE usar informações do Context Detection (não extrair novamente)
     if detected_context and (
         detected_context.get("key_questions")
         or detected_context.get("entities_mentioned")
     ):
-        # Context Detection jÃ¡ fez o CoT - NÃƒO pedir re-extraÃ§Ã£o
+        # Context Detection já fez o CoT - NÃO pedir re-extração
         chain_of_thought = f"""
-âš™ï¸ **PROCESSO DE PLANEJAMENTO:**
-Pense passo a passo INTERNAMENTE, mas NÃƒO exponha o raciocÃ­nio. Retorne APENAS JSON.
+⚙️ **PROCESSO DE PLANEJAMENTO:**
+Pense passo a passo INTERNAMENTE, mas NÃO exponha o raciocínio. Retorne APENAS JSON.
 
-1. **MAPEAR** cada KEY_QUESTION do payload acima â†’ uma fase especÃ­fica
-2. **DIVIDIR** em atÃ© {phases} fases MECE (panorama â†’ detalhes â†’ atual/news)
-3. **APLICAR** janelas temporais: 3y (panorama), 1y (tendÃªncias), 90d (notÃ­cias)
+1. **MAPEAR** cada KEY_QUESTION do payload acima → uma fase específica
+2. **DIVIDIR** em até {phases} fases MECE (panorama → detalhes → atual/news)
+3. **APLICAR** janelas temporais: 3y (panorama), 1y (tendências), 90d (notícias)
 4. **INCLUIR** ENTITIES_CANONICAL nos must_terms conforme phase_type
 
 {cot_preamble}
@@ -4093,15 +4093,15 @@ Pense passo a passo INTERNAMENTE, mas NÃƒO exponha o raciocÃ­nio. Retorne AP
     else:
         # Fallback: se Context Detection falhou completamente
         chain_of_thought = f"""
-âš ï¸ FALLBACK MODE (Context Detection falhou):
-Extraia vocÃª mesmo as key questions e entidades da consulta abaixo e divida em fases.
+⚠️ FALLBACK MODE (Context Detection falhou):
+Extraia você mesmo as key questions e entidades da consulta abaixo e divida em fases.
 {cot_preamble}
 """
 
-    # Exemplo mÃ­nimo (1 bloco) â€” mantÃ©m orientaÃ§Ã£o sem inflar prompt
+    # Exemplo mínimo (1 bloco) — mantém orientação sem inflar prompt
     example_json = """    {
       "name": "Panorama geral",
-      "objective": "Pergunta verificÃ¡vel e especÃ­fica",
+      "objective": "Pergunta verificável e específica",
       "seed_query": "<3-6 palavras, sem operadores>",
       "seed_core": "<12-200 chars, 1 frase rica, sem operadores>",
       "must_terms": ["<todas as entidades mencionadas>"],
@@ -4112,88 +4112,88 @@ Extraia vocÃª mesmo as key questions e entidades da consulta abaixo e divida e
 
     # P1: Exemplo ANTES/DEPOIS para seed_query (clareza de tema central)
     seed_before_after = """
-âš ï¸ EXEMPLOS DE SEED QUERY - ANTES E DEPOIS:
+⚠️ EXEMPLOS DE SEED QUERY - ANTES E DEPOIS:
 
-âŒ ERRADO (sem tema central):
-- "volume fees Brasil" â†’ Falta contexto (fees de QUÃŠ?)
-- "tendÃªncias serviÃ§os Brasil" â†’ GenÃ©rico (serviÃ§os de QUÃŠ?)
-- "reputaÃ§Ã£o boutiques Brasil" â†’ AmbÃ­guo (boutiques de QUÃŠ?)
+❌ ERRADO (sem tema central):
+- "volume fees Brasil" → Falta contexto (fees de QUÊ?)
+- "tendências serviços Brasil" → Genérico (serviços de QUÊ?)
+- "reputação boutiques Brasil" → Ambíguo (boutiques de QUÊ?)
 
-âœ… CORRETO (tema presente):
-- "volume fees executive search Brasil" â†’ Tema: executive search
-- "tendÃªncias headhunting Brasil" â†’ Tema: headhunting
-- "reputaÃ§Ã£o boutiques executive search Brasil" â†’ Tema: executive search
+✅ CORRETO (tema presente):
+- "volume fees executive search Brasil" → Tema: executive search
+- "tendências headhunting Brasil" → Tema: headhunting
+- "reputação boutiques executive search Brasil" → Tema: executive search
 
 REGRA: seed_query = TEMA_CENTRAL + ASPECTO + GEO
 """
 
-    # P1: InstruÃ§Ãµes para seed_core (OBRIGATÃ“RIO)
+    # P1: Instruções para seed_core (OBRIGATÓRIO)
     seed_core_instructions = """
-âš ï¸ **SEED_CORE (OBRIGATÃ“RIO para TODAS as fases):**
+⚠️ **SEED_CORE (OBRIGATÓRIO para TODAS as fases):**
 - Formato: 1 frase rica (12-200 chars), linguagem natural, SEM operadores
 - Inclui: entidades + tema + aspecto + recorte geotemporal
 - Contexto completo para Discovery Tool executar busca efetiva
-- RelaÃ§Ã£o com seed_query: seed_core Ã© expansÃ£o rica de seed_query
+- Relação com seed_query: seed_core é expansão rica de seed_query
 
 EXEMPLOS:
 Fase "Volume setorial":
   seed_query: "volume executive search Brasil"
-  seed_core: "volume anual mercado executive search Brasil Ãºltimos 3 anos fontes oficiais associaÃ§Ãµes setor"
+  seed_core: "volume anual mercado executive search Brasil últimos 3 anos fontes oficiais associações setor"
 
-Fase "TendÃªncias serviÃ§os":
-  seed_query: "tendÃªncias headhunting Brasil"
-  seed_core: "tendÃªncias emergentes serviÃ§os headhunting e recrutamento executivo Brasil Ãºltimos 12 meses inovaÃ§Ãµes tecnologia"
+Fase "Tendências serviços":
+  seed_query: "tendências headhunting Brasil"
+  seed_core: "tendências emergentes serviços headhunting e recrutamento executivo Brasil últimos 12 meses inovações tecnologia"
 
 Fase "Perfis empresas":
-  seed_query: "Korn Ferry portfÃ³lio Brasil"
-  seed_core: "Korn Ferry portfÃ³lio serviÃ§os posicionamento competitivo mercado brasileiro executive search Ãºltimos 2 anos"
+  seed_query: "Korn Ferry portfólio Brasil"
+  seed_core: "Korn Ferry portfólio serviços posicionamento competitivo mercado brasileiro executive search últimos 2 anos"
 
-âŒ ERRADO (muito curta, sem contexto):
+❌ ERRADO (muito curta, sem contexto):
   seed_core: "Flow CNPJ Brasil"  // Apenas 3 palavras
 
-âœ… CORRETO:
-  seed_core: "Flow Executive Finders CNPJ registro Receita Federal Brasil razÃ£o social data fundaÃ§Ã£o"
+✅ CORRETO:
+  seed_core: "Flow Executive Finders CNPJ registro Receita Federal Brasil razão social data fundação"
 """
 
-    # Framework de auto-validaÃ§Ã£o de realismo
+    # Framework de auto-validação de realismo
     realism_framework = """
-ðŸ” AUTO-VALIDAÃ‡ÃƒO DE REALISMO (PENSE ANTES DE INCLUIR MÃ‰TRICAS):
+🔍 AUTO-VALIDAÇÃO DE REALISMO (PENSE ANTES DE INCLUIR MÉTRICAS):
 
-Para CADA mÃ©trica/dado que vocÃª incluir no objective, faÃ§a a pergunta:
+Para CADA métrica/dado que você incluir no objective, faça a pergunta:
 
-'Empresas/organizaÃ§Ãµes DESTE TIPO e PORTE divulgam isso publicamente?'
+'Empresas/organizações DESTE TIPO e PORTE divulgam isso publicamente?'
 
 Use seu conhecimento sobre:
-  â€¢ PrÃ¡ticas do setor (financeiro vs tech vs saÃºde vs consultoria)
-  â€¢ Tipo de empresa (listada vs privada vs startup vs pÃºblica)
-  â€¢ Sensibilidade competitiva (pricing, margens, mÃ©tricas operacionais)
-  â€¢ ObrigaÃ§Ãµes regulatÃ³rias (empresas listadas divulgam mais)
+  • Práticas do setor (financeiro vs tech vs saúde vs consultoria)
+  • Tipo de empresa (listada vs privada vs startup vs pública)
+  • Sensibilidade competitiva (pricing, margens, métricas operacionais)
+  • Obrigações regulatórias (empresas listadas divulgam mais)
 
-HEURÃSTICA SIMPLES:
-  âœ… Se encontraria em: site corporativo, press releases, relatÃ³rios anuais
-     â†’ INCLUIR no objective
-  âš ï¸ Se encontraria apenas em: relatÃ³rios internos, pitches de vendas
-     â†’ EVITAR ou marcar como 'se disponÃ­vel'
-  âŒ Se Ã© vantagem competitiva: pricing real, custos, mÃ©tricas operacionais
-     â†’ NÃƒO incluir, focar em proxies pÃºblicas
+HEURÍSTICA SIMPLES:
+  ✅ Se encontraria em: site corporativo, press releases, relatórios anuais
+     → INCLUIR no objective
+  ⚠️ Se encontraria apenas em: relatórios internos, pitches de vendas
+     → EVITAR ou marcar como 'se disponível'
+  ❌ Se é vantagem competitiva: pricing real, custos, métricas operacionais
+     → NÃO incluir, focar em proxies públicas
 
-EXEMPLO DE RACIOCÃNIO:
+EXEMPLO DE RACIOCÍNIO:
 Query: 'Boutique de executive search no Brasil'
-MÃ©trica considerada: 'time-to-fill mÃ©dio, success rate %'
+Métrica considerada: 'time-to-fill médio, success rate %'
 
-Pergunta: Consultoria de RH divulga mÃ©tricas operacionais?
-Resposta: NÃ£o - sÃ£o vantagens competitivas confidenciais.
-          Empresas listadas divulgam revenue agregado, privadas nÃ£o.
+Pergunta: Consultoria de RH divulga métricas operacionais?
+Resposta: Não - são vantagens competitivas confidenciais.
+          Empresas listadas divulgam revenue agregado, privadas não.
 
-Objective ajustado: 'portfÃ³lio de serviÃ§os, setores atendidos,
-                     ciclos/processos DECLARADOS (quando disponÃ­vel)'
-                     [proxy pÃºblico para 'rapidez operacional']
+Objective ajustado: 'portfólio de serviços, setores atendidos,
+                     ciclos/processos DECLARADOS (quando disponível)'
+                     [proxy público para 'rapidez operacional']
 
-âš ï¸ IMPORTANTE: VocÃª conhece centenas de setores. Use esse conhecimento.
-               NÃ£o force mÃ©tricas que vocÃª sabe serem privadas.
+⚠️ IMPORTANTE: Você conhece centenas de setores. Use esse conhecimento.
+               Não force métricas que você sabe serem privadas.
 """
 
-    # Usar dicionÃ¡rios globais de prompts
+    # Usar dicionários globais de prompts
     system_prompt = PROMPTS["planner_system"].format(phases=phases)
     seed_rules = _build_seed_query_rules()
     time_windows = _build_time_windows_table()
@@ -4210,7 +4210,7 @@ Objective ajustado: 'portfÃ³lio de serviÃ§os, setores atendidos,
 
 {system_prompt}
 
-ðŸŽ¯ OBJETIVO DA PESQUISA:
+🎯 OBJETIVO DA PESQUISA:
 {user_prompt}
 
 {seed_rules}
@@ -4219,145 +4219,145 @@ Objective ajustado: 'portfÃ³lio de serviÃ§os, setores atendidos,
 
 {entity_rules}
 
-ðŸŽ¯ **ECONOMIA DE FASES (CRITICAL):**
-ATÃ‰ """
+🎯 **ECONOMIA DE FASES (CRITICAL):**
+ATÉ """
         + str(phases)
         + """ fases permitidas. PREFIRA MENOS FASES BEM FOCADAS.
 
 **QUANDO COMBINAR (1 fase):**
-- Objetivo = comparar/rankear mÃºltiplas entidades
-- Overview geral ou anÃ¡lise aggregada de mercado
+- Objetivo = comparar/rankear múltiplas entidades
+- Overview geral ou análise aggregada de mercado
 
 **QUANDO ESPECIALIZAR (1 fase/entidade):**
-- UsuÃ¡rio pede "perfis detalhados" / "anÃ¡lise profunda"
+- Usuário pede "perfis detalhados" / "análise profunda"
 - Entidades muito distintas (B2B vs B2C, setores diferentes)
-- Volume esperado >10 pÃ¡ginas por entidade
+- Volume esperado >10 páginas por entidade
 
 **EXEMPLOS:**
-- "Compare receita A, B, C" â†’ âœ… 2 fases (receitas 3y + drivers 1y) | âŒ 6 fases (1/empresa + trends)
-- "Perfis detalhados A, B, C" â†’ âœ… 4 fases (3 perfis deep + comparativa) | Justificado: especializaÃ§Ã£o necessÃ¡ria
+- "Compare receita A, B, C" → ✅ 2 fases (receitas 3y + drivers 1y) | ❌ 6 fases (1/empresa + trends)
+- "Perfis detalhados A, B, C" → ✅ 4 fases (3 perfis deep + comparativa) | Justificado: especialização necessária
 
-ðŸ“Š **SCORING:** PrecisÃ£o 40% + Economia 30% + MECE 30% â†’ Menos fases (mesma cobertura) = SUPERIOR
+📊 **SCORING:** Precisão 40% + Economia 30% + MECE 30% → Menos fases (mesma cobertura) = SUPERIOR
 
-**CHECKLIST:** Antes de criar fase â†’ (1) Responde key_question Ãºnica? (2) Aspecto/temporal diferente? (3) Combinar degrada qualidade? â†’ Se NÃƒO para qualquer â†’ NÃƒO CRIE
+**CHECKLIST:** Antes de criar fase → (1) Responde key_question única? (2) Aspecto/temporal diferente? (3) Combinar degrada qualidade? → Se NÃO para qualquer → NÃO CRIE
 
-ðŸ”´ **REGRA ESPECIAL - PEDIDOS EXPLÃCITOS DE NOTÃCIAS:**
-Se o usuÃ¡rio mencionar "notÃ­cias", "noticias", "fase de notÃ­cias", "eventos recentes":
-â†’ OBRIGATÃ“RIO criar fase type="news" com:
+🔴 **REGRA ESPECIAL - PEDIDOS EXPLÍCITOS DE NOTÍCIAS:**
+Se o usuário mencionar "notícias", "noticias", "fase de notícias", "eventos recentes":
+→ OBRIGATÓRIO criar fase type="news" com:
   - seed_query: "@noticias" + tema + entidades
-  - time_hint: 1y (Ãºltimos 12 meses)
-  - 90d SOMENTE se usuÃ¡rio disser "breaking news", "Ãºltimos 90 dias" ou "muito recente"
+  - time_hint: 1y (últimos 12 meses)
+  - 90d SOMENTE se usuário disser "breaking news", "últimos 90 dias" ou "muito recente"
 
-âš™ï¸ **PROCESSO DE PLANEJAMENTO (Use o payload acima, NÃƒO re-extraia):**
+⚙️ **PROCESSO DE PLANEJAMENTO (Use o payload acima, NÃO re-extraia):**
 
-Pense passo a passo INTERNAMENTE, mas NÃƒO exponha o raciocÃ­nio. Retorne APENAS JSON.
+Pense passo a passo INTERNAMENTE, mas NÃO exponha o raciocínio. Retorne APENAS JSON.
 
-**ETAPA 1 - MAPEAR (nÃ£o extrair):**
-- Para cada KEY_QUESTION do payload â†’ crie 1 fase especÃ­fica
-- Exemplo: KEY_QUESTION "Qual volume anual?" â†’ Fase "Volume setorial" (phase_type: industry)
-- Exemplo: KEY_QUESTION "Qual reputaÃ§Ã£o?" â†’ Fase "Perfis players" (phase_type: profiles)
+**ETAPA 1 - MAPEAR (não extrair):**
+- Para cada KEY_QUESTION do payload → crie 1 fase específica
+- Exemplo: KEY_QUESTION "Qual volume anual?" → Fase "Volume setorial" (phase_type: industry)
+- Exemplo: KEY_QUESTION "Qual reputação?" → Fase "Perfis players" (phase_type: profiles)
 
 **ETAPA 2 - DIVIDIR em fases MECE por phase_type:**
 
-ðŸŽ¯ **ENTITY-CENTRIC MODE (1-3 entidades mencionadas):**
-SE o payload tem 1-3 ENTITIES_CANONICAL â†’ MODO FOCADO:
-  âœ… **TODAS as fases** devem incluir essas entidades em must_terms
-  âœ… Seed_query de cada fase deve conter nomes das entidades
-  âœ… Objetivo: Manter foco laser nas entidades especÃ­ficas
-  âŒ NÃƒO crie fases genÃ©ricas sem as entidades
+🎯 **ENTITY-CENTRIC MODE (1-3 entidades mencionadas):**
+SE o payload tem 1-3 ENTITIES_CANONICAL → MODO FOCADO:
+  ✅ **TODAS as fases** devem incluir essas entidades em must_terms
+  ✅ Seed_query de cada fase deve conter nomes das entidades
+  ✅ Objetivo: Manter foco laser nas entidades específicas
+  ❌ NÃO crie fases genéricas sem as entidades
   
-ðŸ“Š **MULTI-ENTITY MODE (4+ entidades mencionadas):**
-SE o payload tem 4+ ENTITIES_CANONICAL â†’ MODO DISTRIBUÃDO:
-  - **industry**: pode ter subset (â‰¤3 entidades representativas)
+📊 **MULTI-ENTITY MODE (4+ entidades mencionadas):**
+SE o payload tem 4+ ENTITIES_CANONICAL → MODO DISTRIBUÍDO:
+  - **industry**: pode ter subset (≤3 entidades representativas)
   - **profiles**: deve ter TODAS
   - **news**: deve ter TODAS
 
-**Phase types (aplique a lÃ³gica acima):**
-- **industry**: panorama setorial (volume, tendÃªncias, players)
-  - must_terms: [ENTITY-CENTRIC: todas entidades] [MULTI: subset â‰¤3] + termos setoriais + geo
+**Phase types (aplique a lógica acima):**
+- **industry**: panorama setorial (volume, tendências, players)
+  - must_terms: [ENTITY-CENTRIC: todas entidades] [MULTI: subset ≤3] + termos setoriais + geo
   - time_hint: 1y ou 3y
 - **profiles**: perfis detalhados de players
   - must_terms: **TODAS** as ENTITIES_CANONICAL do payload + geo
   - time_hint: 3y
-- **news**: notÃ­cias e eventos relevantes (Ãºltimos 12 meses)
+- **news**: notícias e eventos relevantes (últimos 12 meses)
   - must_terms: **TODAS** as ENTITIES_CANONICAL do payload + geo
   - seed_query: DEVE incluir "@noticias" + tema + entidades
-  - time_hint: 1y (DEFAULT) | 90d SOMENTE para "breaking news" explÃ­cito
+  - time_hint: 1y (DEFAULT) | 90d SOMENTE para "breaking news" explícito
 
 **ETAPA 3 - APLICAR janelas temporais corretas:
-ðŸ” **CONTEXTO IMPORTA:** A janela temporal depende do TIPO DE INFORMAÃ‡ÃƒO, nÃ£o apenas se Ã© "notÃ­cia"!
+🔍 **CONTEXTO IMPORTA:** A janela temporal depende do TIPO DE INFORMAÇÃO, não apenas se é "notícia"!
 
 """
         + _build_time_windows_table()
         + """
 
-âš ï¸ **CRÃTICO - ESTUDOS DE MERCADO (READ THIS!):**
+⚠️ **CRÍTICO - ESTUDOS DE MERCADO (READ THIS!):**
 
-ðŸš¨ **SE** o objetivo geral contÃ©m ["estudo", "anÃ¡lise", "mercado", "setor", "panorama", "competitivo"]:
+🚨 **SE** o objetivo geral contém ["estudo", "análise", "mercado", "setor", "panorama", "competitivo"]:
 
-**ARQUITETURA OBRIGATÃ“RIA (NÃƒO NEGOCIÃVEL):**
-1. âœ… Fase "industry/profiles" com 3y (contexto/baseline)
-2. âœ… **Fase "notÃ­cias/eventos" com 1y** (OBRIGATÃ“RIA se planejando 3+ fases)
+**ARQUITETURA OBRIGATÓRIA (NÃO NEGOCIÁVEL):**
+1. ✅ Fase "industry/profiles" com 3y (contexto/baseline)
+2. ✅ **Fase "notícias/eventos" com 1y** (OBRIGATÓRIA se planejando 3+ fases)
    - seed_query DEVE ter "@noticias" + tema + entidades
-   - Captura Ãºltimos 12 meses de eventos relevantes
-   - 90d SOMENTE se usuÃ¡rio pedir "breaking news" ou "Ãºltimos 90 dias" explicitamente
-3. âœ… Fase adicional de "perfis" ou "tendÃªncias" conforme necessÃ¡rio
+   - Captura últimos 12 meses de eventos relevantes
+   - 90d SOMENTE se usuário pedir "breaking news" ou "últimos 90 dias" explicitamente
+3. ✅ Fase adicional de "perfis" ou "tendências" conforme necessário
 
-**âŒ ERRO COMUM (NÃƒO FAÃ‡A):**
+**❌ ERRO COMUM (NÃO FAÇA):**
 - Criar apenas 1 fase "news" com 90d
-- Esquecer de incluir "@noticias" na seed_query de fases de notÃ­cias
-- Criar fases genÃ©ricas sem as entidades quando hÃ¡ 1-3 entidades (entity-centric)
-- Resultado: perde tendÃªncias dos Ãºltimos 12 meses (70% das key questions nÃ£o respondidas) + falta foco nas entidades
+- Esquecer de incluir "@noticias" na seed_query de fases de notícias
+- Criar fases genéricas sem as entidades quando há 1-3 entidades (entity-centric)
+- Resultado: perde tendências dos últimos 12 meses (70% das key questions não respondidas) + falta foco nas entidades
 
-**âœ… EXEMPLO CORRETO - Estudo entity-centric (3 entidades: Health+, Vida Melhor, OncoTech):**
+**✅ EXEMPLO CORRETO - Estudo entity-centric (3 entidades: Health+, Vida Melhor, OncoTech):**
 ```json
 {
-  "plan_intent": "Mapear oportunidades e riscos em saÃºde digital com foco em 3 hospitais brasileiros",
+  "plan_intent": "Mapear oportunidades e riscos em saúde digital com foco em 3 hospitais brasileiros",
   "phases": [
     {"name": "Panorama de mercado e players (3 anos)", "phase_type": "industry", 
-    "seed_query": "RedeDr SÃ³ SaÃºde oncologia Brasil",  // â† ENTITY-CENTRIC: todas as 3 empresas
-    "must_terms": ["RedeDr", "SÃ³ SaÃºde", "Onco Brasil", "saÃºde digital", "Brasil"],  // â† TODAS
+    "seed_query": "RedeDr Só Saúde oncologia Brasil",  // ← ENTITY-CENTRIC: todas as 3 empresas
+    "must_terms": ["RedeDr", "Só Saúde", "Onco Brasil", "saúde digital", "Brasil"],  // ← TODAS
      "time_hint": {"recency": "3y"}},
-    {"name": "Perfis, serviÃ§os e reputaÃ§Ã£o", "phase_type": "profiles", 
-    "seed_query": "Health+ Vida Melhor OncoTech serviÃ§os rankings reputaÃ§Ã£o",  // â† ENTITY-CENTRIC: todas as 3
-    "must_terms": ["Health+", "Vida Melhor", "OncoTech", "saÃºde digital", "Brasil"],  // â† TODAS
+    {"name": "Perfis, serviços e reputação", "phase_type": "profiles", 
+    "seed_query": "Health+ Vida Melhor OncoTech serviços rankings reputação",  // ← ENTITY-CENTRIC: todas as 3
+    "must_terms": ["Health+", "Vida Melhor", "OncoTech", "saúde digital", "Brasil"],  // ← TODAS
      "time_hint": {"recency": "3y"}},
-    {"name": "NotÃ­cias e eventos (12 meses)", "phase_type": "news", 
-    "seed_query": "@noticias Magalu Via Americanas varejo Brasil",  // â† ENTITY-CENTRIC + @noticias
-    "must_terms": ["Magazine Luiza", "Via", "Americanas", "varejo", "Brasil"],  // â† TODAS
-     "objective": "AquisiÃ§Ãµes, lanÃ§amentos, mudanÃ§as de mercado com foco nas 3 empresas-alvo (12 meses)",
-     "time_hint": {"recency": "1y", "strict": false}}  // â† 1y (nÃ£o 90d!)
+    {"name": "Notícias e eventos (12 meses)", "phase_type": "news", 
+    "seed_query": "@noticias Magalu Via Americanas varejo Brasil",  // ← ENTITY-CENTRIC + @noticias
+    "must_terms": ["Magazine Luiza", "Via", "Americanas", "varejo", "Brasil"],  // ← TODAS
+     "objective": "Aquisições, lançamentos, mudanças de mercado com foco nas 3 empresas-alvo (12 meses)",
+     "time_hint": {"recency": "1y", "strict": false}}  // ← 1y (não 90d!)
   ]
 }
 ```
 
-**âš ï¸ CONTRASTE - ERRADO (fases genÃ©ricas, perdeu foco):**
+**⚠️ CONTRASTE - ERRADO (fases genéricas, perdeu foco):**
 ```json
 {
   "phases": [
-    {"name": "Panorama geral", "seed_query": "mercado executive search Brasil",  // âŒ SEM entidades
-     "must_terms": ["executive search", "Brasil"]},  // âŒ Faltam empresas
-    {"name": "TendÃªncias", "seed_query": "tendÃªncias serviÃ§os headhunting Brasil",  // âŒ SEM entidades
-     "must_terms": ["executive search", "assessment"]},  // âŒ Faltam empresas
-    {"name": "Perfis", "seed_query": "Health+ Vida Melhor OncoTech",  // âœ… Tem entidades MAS sÃ³ em 1 fase
-     "must_terms": ["Health+", "Vida Melhor", "OncoTech"]}  // âœ… OK mas TARDE DEMAIS (70% das fases sem foco)
+    {"name": "Panorama geral", "seed_query": "mercado executive search Brasil",  // ❌ SEM entidades
+     "must_terms": ["executive search", "Brasil"]},  // ❌ Faltam empresas
+    {"name": "Tendências", "seed_query": "tendências serviços headhunting Brasil",  // ❌ SEM entidades
+     "must_terms": ["executive search", "assessment"]},  // ❌ Faltam empresas
+    {"name": "Perfis", "seed_query": "Health+ Vida Melhor OncoTech",  // ✅ Tem entidades MAS só em 1 fase
+     "must_terms": ["Health+", "Vida Melhor", "OncoTech"]}  // ✅ OK mas TARDE DEMAIS (70% das fases sem foco)
   ]
 }
 ```
-**Resultado errado: Judge detecta falta de foco nas empresas-alvo e cria novas fases redundantes (desperdÃ­cio de budget)**
+**Resultado errado: Judge detecta falta de foco nas empresas-alvo e cria novas fases redundantes (desperdício de budget)**
 
-**ðŸŽ¯ VALIDAÃ‡ÃƒO OBRIGATÃ“RIA (checklist antes de retornar plano):**
-- [ ] **Entity-centric?** Se 1-3 entidades: â‰¥70% das fases incluem essas entidades em must_terms?
-- [ ] **Temporal coverage?** HÃ¡ fase com recency=1y para capturar tendÃªncias dos Ãºltimos 12 meses?
-- [ ] **News phase?** Se pedido "notÃ­cias" ou "estudo de mercado": fase news com "@noticias" e 1y?
+**🎯 VALIDAÇÃO OBRIGATÓRIA (checklist antes de retornar plano):**
+- [ ] **Entity-centric?** Se 1-3 entidades: ≥70% das fases incluem essas entidades em must_terms?
+- [ ] **Temporal coverage?** Há fase com recency=1y para capturar tendências dos últimos 12 meses?
+- [ ] **News phase?** Se pedido "notícias" ou "estudo de mercado": fase news com "@noticias" e 1y?
 - [ ] **Key questions cobertas?** Cada KEY_QUESTION do payload tem fase correspondente?
-- [ ] **Seed_query vÃ¡lido?** 3-8 palavras, sem operadores, contÃ©m tema central + entidades?
-ðŸ“ REGRAS OBRIGATÃ“RIAS:
-âœ… CADA FASE TEM:
-   - name: descritivo e Ãºnico
-   - objective: pergunta verificÃ¡vel (nÃ£o genÃ©rica!)
+- [ ] **Seed_query válido?** 3-8 palavras, sem operadores, contém tema central + entidades?
+📐 REGRAS OBRIGATÓRIAS:
+✅ CADA FASE TEM:
+   - name: descritivo e único
+   - objective: pergunta verificável (não genérica!)
    - seed_query: 3-8 palavras, SEM operadores
-   - seed_core: 12-200 chars, frase rica para discovery (OBRIGATÃ“RIO!)
+   - seed_core: 12-200 chars, frase rica para discovery (OBRIGATÓRIO!)
      
      """
         + _build_seed_query_rules()
@@ -4367,95 +4367,95 @@ SE o payload tem 4+ ENTITIES_CANONICAL â†’ MODO DISTRIBUÃDO:
         + _build_entity_rules_compact()
         + """
      
-     **SLACK SEMÃ‚NTICO PARA ASPECTOS/MÃ‰TRICAS:**
+     **SLACK SEMÂNTICO PARA ASPECTOS/MÉTRICAS:**
      
-     âŒ NÃƒO coloque mÃ©tricas/aspectos especÃ­ficos na seed:
-     - "volume fees tempo-to-fill executive search Brasil" (6 palavras, MUITO especÃ­fica)
+     ❌ NÃO coloque métricas/aspectos específicos na seed:
+     - "volume fees tempo-to-fill executive search Brasil" (6 palavras, MUITO específica)
      
-     âœ… Seed genÃ©rica + mÃ©tricas em must_terms:
+     ✅ Seed genérica + métricas em must_terms:
      - seed: "mercado executive search Brasil" (4 palavras)
-     - must_terms: ["volume", "fees", "tempo-to-fill", "colocaÃ§Ãµes", "market size", ...]
+     - must_terms: ["volume", "fees", "tempo-to-fill", "colocações", "market size", ...]
      
-   - must_terms: **CRÃTICO - TODOS OS NOMES VÃƒO AQUI (SEMPRE)**
-     * Independente de quantos, TODOS os nomes vÃ£o em must_terms
-     * Se usuÃ¡rio mencionou 10 empresas, TODAS vÃ£o em must_terms
-     * Se usuÃ¡rio mencionou produtos/pessoas, TODOS vÃ£o em must_terms
+   - must_terms: **CRÍTICO - TODOS OS NOMES VÃO AQUI (SEMPRE)**
+     * Independente de quantos, TODOS os nomes vão em must_terms
+     * Se usuário mencionou 10 empresas, TODAS vão em must_terms
+     * Se usuário mencionou produtos/pessoas, TODOS vão em must_terms
      * Discovery vai usar must_terms para priorizar e expandir a busca
-     * Seed_query + must_terms = mÃ¡xima precisÃ£o
+     * Seed_query + must_terms = máxima precisão
    - lang_bias: ["pt-BR","en"]
    - geo_bias: ["BR","global"]
 
-ðŸ†• **NOVO v4.7 - SEED_CORE E SEED_FAMILY_HINT:**
+🆕 **NOVO v4.7 - SEED_CORE E SEED_FAMILY_HINT:**
 
 **seed_core** (OPCIONAL mas RECOMENDADO):
-- VersÃ£o RICA da seed_query (1 frase, â‰¤200 chars, sem operadores)
-- Usado pelo Discovery para gerar 1-3 variaÃ§Ãµes de busca
+- Versão RICA da seed_query (1 frase, ≤200 chars, sem operadores)
+- Usado pelo Discovery para gerar 1-3 variações de busca
 - Se ausente, Discovery usa seed_query (curta)
 **EXEMPLOS:**
-- seed_query: "aquisiÃ§Ãµes headhunting Brasil" (curta, 3 palavras)
-- seed_core: "aquisiÃ§Ãµes e parcerias estratÃ©gicas no mercado de headhunting no Brasil nos Ãºltimos 12 meses" (rica, contexto completo)
+- seed_query: "aquisições headhunting Brasil" (curta, 3 palavras)
+- seed_core: "aquisições e parcerias estratégicas no mercado de headhunting no Brasil nos últimos 12 meses" (rica, contexto completo)
 
 **seed_family_hint** (OPCIONAL, default: "entity-centric"):
-- Orienta Discovery sobre TIPO de exploraÃ§Ã£o
+- Orienta Discovery sobre TIPO de exploração
 - Valores: "entity-centric" | "problem-centric" | "outcome-centric" | "regulatory" | "counterfactual"
-**TEMPLATES POR FAMÃLIA:**
+**TEMPLATES POR FAMÍLIA:**
 - **entity-centric**: "<ENTIDADE/SETOR> <tema central> <recorte geotemporal>"
-  - Ex: "Spencer Stuart executive search Brasil Ãºltimos 12 meses"
+  - Ex: "Spencer Stuart executive search Brasil últimos 12 meses"
 - **problem-centric**: "<problema/risco> <drivers/causas> <contexto/segmento>"
   - Ex: "escassez de talentos C-level causas mercado brasileiro"
 - **outcome-centric**: "<efeito/resultado> <indicadores/impacto> <stakeholders>"
   - Ex: "impacto turnover executivo indicadores performance empresas"
-- **regulatory**: "<norma/regulador> <exigÃªncias/procedimentos> <abrangÃªncia>"
+- **regulatory**: "<norma/regulador> <exigências/procedimentos> <abrangência>"
   - Ex: "LGPD requisitos compliance headhunting Brasil"
-- **counterfactual**: "<tese/controvÃ©rsia> <objeÃ§Ã£o/antÃ­tese> <evidÃªncia-chave>"
-  - Ex: "boutiques locais vs internacionais vantagens competitivas evidÃªncias"
+- **counterfactual**: "<tese/controvérsia> <objeção/antítese> <evidência-chave>"
+  - Ex: "boutiques locais vs internacionais vantagens competitivas evidências"
 
-**QUANDO USAR CADA FAMÃLIA:**
-- **entity-centric** (default): Foco em empresas/produtos/pessoas especÃ­ficas
+**QUANDO USAR CADA FAMÍLIA:**
+- **entity-centric** (default): Foco em empresas/produtos/pessoas específicas
 - **problem-centric**: Quando objetivo menciona "desafios", "riscos", "problemas"
 - **outcome-centric**: Quando objetivo menciona "impacto", "resultados", "efeitos"
-- **regulatory**: Quando objetivo menciona "compliance", "regulaÃ§Ã£o", "normas"
+- **regulatory**: Quando objetivo menciona "compliance", "regulação", "normas"
 - **counterfactual**: Quando objetivo menciona "comparar", "contrastar", "alternativas"
 
-âš ï¸ **IMPORTANTE:**
+⚠️ **IMPORTANTE:**
 - Se Judge anterior sugeriu seed_family diferente (via NEW_PHASE), RESPEITE-A
-- seed_core e seed_family_hint sÃ£o OPCIONAIS (backwards-compatible)
+- seed_core e seed_family_hint são OPCIONAIS (backwards-compatible)
 - Se ausentes, Discovery usa seed_query (comportamento atual)
 
-âŒ NÃƒO FAÃ‡A:
-   - Objetivos genÃ©ricos ("explorar", "entender melhor")
-   - Seed queries idÃªnticas ou muito similares
+❌ NÃO FAÇA:
+   - Objetivos genéricos ("explorar", "entender melhor")
+   - Seed queries idênticas ou muito similares
    - Operadores em seed_query (apenas 3-6 palavras simples)
-   - Esquecer @noticias para tÃ³picos atuais
-   - **IGNORAR ENTIDADES ESPECÃFICAS** mencionadas no objetivo do usuÃ¡rio
-   - Ser genÃ©rico quando o usuÃ¡rio foi especÃ­fico (ex: usuÃ¡rio menciona 10 empresas, vocÃª ignora)
+   - Esquecer @noticias para tópicos atuais
+   - **IGNORAR ENTIDADES ESPECÍFICAS** mencionadas no objetivo do usuário
+   - Ser genérico quando o usuário foi específico (ex: usuário menciona 10 empresas, você ignora)
 
-ðŸŽ¯ SAÃDA OBRIGATÃ“RIA: APENAS JSON PURO (sem markdown, sem comentÃ¡rios, sem texto extra)
+🎯 SAÍDA OBRIGATÓRIA: APENAS JSON PURO (sem markdown, sem comentários, sem texto extra)
 
-SCHEMA JSON OBRIGATÃ“RIO (com phase_type + seed_core + seed_family_hint):
+SCHEMA JSON OBRIGATÓRIO (com phase_type + seed_core + seed_family_hint):
 {{
   "plan_intent": "<objetivo do plano em 1 frase>",
-  "total_phases_used": <int OPCIONAL: quantas fases criou, se omitir serÃ¡ inferido>,
-  "phases_justification": "<string OPCIONAL: por que esse nÃºmero de fases Ã© suficiente/econÃ´mico>",
-  "assumptions_to_validate": ["<hipÃ³tese1>", "<hipÃ³tese2>"],
+  "total_phases_used": <int OPCIONAL: quantas fases criou, se omitir será inferido>,
+  "phases_justification": "<string OPCIONAL: por que esse número de fases é suficiente/econômico>",
+  "assumptions_to_validate": ["<hipótese1>", "<hipótese2>"],
   "phases": [
     {{
       "name": "<nome descritivo da fase>",
       "phase_type": "industry|profiles|news|regulatory|financials|tech",
-      "objective": "<pergunta verificÃ¡vel e especÃ­fica>",
+      "objective": "<pergunta verificável e específica>",
       "seed_query": "<3-6 palavras, SEM operadores (@, site:, OR, AND)>",
-      "seed_core": "<OPCIONAL: 1 frase rica â‰¤200 chars, sem operadores>",
+      "seed_core": "<OPCIONAL: 1 frase rica ≤200 chars, sem operadores>",
       "seed_family_hint": "<OPCIONAL: entity-centric|problem-centric|outcome-centric|regulatory|counterfactual>",
       "must_terms": ["<termo1>", "<termo2>"],
       "time_hint": {{"recency": "90d|1y|3y", "strict": false}},
       "lang_bias": ["pt-BR","en"],
       "geo_bias": ["BR","global"],
-      "suggested_domains": ["<OPCIONAL: domÃ­nios prioritÃ¡rios>"],
+      "suggested_domains": ["<OPCIONAL: domínios prioritários>"],
       "suggested_filetypes": ["<OPCIONAL: html, pdf, etc>"]
     }}
     // Repetir para 1 a """
         + str(phases)
-        + """ fases (conforme necessÃ¡rio, nÃ£o obrigatÃ³rio usar todas)
+        + """ fases (conforme necessário, não obrigatório usar todas)
   ],
   "quality_rails": {{"min_unique_domains": """
         + str(max(2, phases))
@@ -4465,212 +4465,212 @@ SCHEMA JSON OBRIGATÃ“RIO (com phase_type + seed_core + seed_family_hint):
   "budget": {{"max_rounds": 2}}
 }}
 
-âš ï¸ IMPORTANTE: VocÃª pode criar 1, 2, 3... atÃ© """
+⚠️ IMPORTANTE: Você pode criar 1, 2, 3... até """
         + str(phases)
-        + """ fases. Escolha o nÃºmero que FAZ SENTIDO para o objetivo!
-- Objetivo simples/especÃ­fico? â†’ 2-3 fases podem bastar
-- Objetivo complexo/amplo? â†’ Use mais fases (atÃ© o mÃ¡ximo)
+        + """ fases. Escolha o número que FAZ SENTIDO para o objetivo!
+- Objetivo simples/específico? → 2-3 fases podem bastar
+- Objetivo complexo/amplo? → Use mais fases (até o máximo)
 
-ðŸ’¡ EXEMPLO 1 - GenÃ©rico (SEM empresas mencionadas):
-"analisar indÃºstria de executive search no Brasil":
-- must_terms: ["executive search", "Brasil", "mercado"]  â† GenÃ©rico OK
+💡 EXEMPLO 1 - Genérico (SEM empresas mencionadas):
+"analisar indústria de executive search no Brasil":
+- must_terms: ["executive search", "Brasil", "mercado"]  ← Genérico OK
 
-ðŸ’¡ EXEMPLO 2A - Poucas entidades (1-3):
+💡 EXEMPLO 2A - Poucas entidades (1-3):
 "estudo sobre Health+, Vida Melhor e OncoTech no Brasil":
-- seed_query: "Health+ Vida Melhor OncoTech saÃºde digital Brasil"  â† 3 nomes na seed (OBRIGATÃ“RIO!)
-- must_terms: ["Health+", "Vida Melhor", "OncoTech", "saÃºde digital", "Brasil"]  â† TODOS aqui tambÃ©m!
+- seed_query: "Health+ Vida Melhor OncoTech saúde digital Brasil"  ← 3 nomes na seed (OBRIGATÓRIO!)
+- must_terms: ["Health+", "Vida Melhor", "OncoTech", "saúde digital", "Brasil"]  ← TODOS aqui também!
 
 "estudo sobre Magalu e Via no Brasil":
-- seed_query: "Magalu Via varejo digital Brasil"  â† 2 nomes na seed (OBRIGATÃ“RIO!)
-- must_terms: ["Magalu", "Via", "varejo digital", "Brasil"]  â† TODOS aqui tambÃ©m!
+- seed_query: "Magalu Via varejo digital Brasil"  ← 2 nomes na seed (OBRIGATÓRIO!)
+- must_terms: ["Magalu", "Via", "varejo digital", "Brasil"]  ← TODOS aqui também!
 
-ðŸ’¡ EXEMPLO 2B - Muitas entidades (7+):
+💡 EXEMPLO 2B - Muitas entidades (7+):
 "estudo sobre Magalu, Via, Americanas, MercadoLivre, Shopee, Amazon, Submarino no Brasil":
-- seed_query: "volume mercado varejo digital Brasil"  â† SEM nomes (tema + aspecto)
-- must_terms: ["Magalu", "Via", "Americanas", "MercadoLivre", "Shopee", "Amazon", "Submarino"]  â† TODOS aqui!
+- seed_query: "volume mercado varejo digital Brasil"  ← SEM nomes (tema + aspecto)
+- must_terms: ["Magalu", "Via", "Americanas", "MercadoLivre", "Shopee", "Amazon", "Submarino"]  ← TODOS aqui!
 
-ðŸ’¡ EXEMPLO CORRETO - Estudo de mercado varejo digital Brasil:
+💡 EXEMPLO CORRETO - Estudo de mercado varejo digital Brasil:
 "mercado de varejo digital no Brasil (Magalu, Via, Americanas, MercadoLivre)":
 ```json
 {{
   "plan_intent": "Mapear mercado de varejo digital no Brasil com foco em players nacionais e internacionais",
-  "assumptions_to_validate": ["Crescimento do e-commerce regional supera o global", "Players locais tÃªm vantagens logÃ­sticas"],
+  "assumptions_to_validate": ["Crescimento do e-commerce regional supera o global", "Players locais têm vantagens logísticas"],
   "phases": [
-    {{"name": "Volume setorial", "phase_type": "industry", "objective": "Qual volume anual do varejo digital no Brasil?", "seed_query": "volume varejo digital Brasil", "seed_core": "volume anual vendas e-commerce Brasil", "must_terms": ["varejo digital", "e-commerce", "Brasil"], "avoid_terms": ["loja fÃ­sica"], "time_hint": {{"recency": "1y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
-    {{"name": "TendÃªncias serviÃ§os", "phase_type": "industry", "objective": "Quais tendÃªncias e serviÃ§os adjacentes surgiram nos Ãºltimos 12 meses?", "seed_query": "tendÃªncias serviÃ§os varejo digital Brasil", "seed_core": "tendÃªncias emergentes serviÃ§os adjacentes varejo digital Brasil Ãºltimos 12 meses inovaÃ§Ãµes tecnologia", "must_terms": ["varejo digital", "omnicanal", "logÃ­stica", "Brasil"], "avoid_terms": ["loja fÃ­sica"], "time_hint": {{"recency": "1y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
-    {{"name": "Perfis e reputaÃ§Ã£o", "phase_type": "profiles", "objective": "Como se posicionam Magalu, Via, Americanas e MercadoLivre?", "seed_query": "reputaÃ§Ã£o players varejo digital Brasil", "seed_core": "Magalu Via Americanas MercadoLivre posicionamento competitivo reputaÃ§Ã£o mercado brasileiro varejo digital Ãºltimos 2 anos", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["reclamaÃ§Ãµes"], "time_hint": {{"recency": "3y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
-    {{"name": "Eventos recentes", "phase_type": "news", "objective": "Quais aquisiÃ§Ãµes ou mudanÃ§as ocorreram nos Ãºltimos 90 dias?", "seed_query": "@noticias aquisiÃ§Ãµes varejo digital Brasil", "seed_core": "aquisiÃ§Ãµes parcerias mudanÃ§as estratÃ©gicas Magalu Via Americanas MercadoLivre varejo digital Brasil Ãºltimos 90 dias", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["promoÃ§Ãµes"], "time_hint": {{"recency": "90d", "strict": true}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}}
+    {{"name": "Volume setorial", "phase_type": "industry", "objective": "Qual volume anual do varejo digital no Brasil?", "seed_query": "volume varejo digital Brasil", "seed_core": "volume anual vendas e-commerce Brasil", "must_terms": ["varejo digital", "e-commerce", "Brasil"], "avoid_terms": ["loja física"], "time_hint": {{"recency": "1y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
+    {{"name": "Tendências serviços", "phase_type": "industry", "objective": "Quais tendências e serviços adjacentes surgiram nos últimos 12 meses?", "seed_query": "tendências serviços varejo digital Brasil", "seed_core": "tendências emergentes serviços adjacentes varejo digital Brasil últimos 12 meses inovações tecnologia", "must_terms": ["varejo digital", "omnicanal", "logística", "Brasil"], "avoid_terms": ["loja física"], "time_hint": {{"recency": "1y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
+    {{"name": "Perfis e reputação", "phase_type": "profiles", "objective": "Como se posicionam Magalu, Via, Americanas e MercadoLivre?", "seed_query": "reputação players varejo digital Brasil", "seed_core": "Magalu Via Americanas MercadoLivre posicionamento competitivo reputação mercado brasileiro varejo digital últimos 2 anos", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["reclamações"], "time_hint": {{"recency": "3y", "strict": false}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}},
+    {{"name": "Eventos recentes", "phase_type": "news", "objective": "Quais aquisições ou mudanças ocorreram nos últimos 90 dias?", "seed_query": "@noticias aquisições varejo digital Brasil", "seed_core": "aquisições parcerias mudanças estratégicas Magalu Via Americanas MercadoLivre varejo digital Brasil últimos 90 dias", "must_terms": ["Magalu", "Via", "Americanas", "MercadoLivre", "Brasil"], "avoid_terms": ["promoções"], "time_hint": {{"recency": "90d", "strict": true}}, "lang_bias": ["pt-BR"], "geo_bias": ["BR"]}}
   ],
   "quality_rails": {{"min_unique_domains": 3, "need_official_or_two_independent": true}},
   "budget": {{"max_rounds": 2}}
 }}
 ```
 
-**OBSERVAÃ‡ÃƒO CRÃTICA sobre o exemplo acima:**
-- âœ… Fase 1 seed: "volume fees EXECUTIVE SEARCH Brasil" (tema presente!)
-- âœ… Fase 2 seed: "tendÃªncias serviÃ§os HEADHUNTING Brasil" (tema presente!)
-- âœ… Fase 3 seed: "reputaÃ§Ã£o players EXECUTIVE SEARCH Brasil" (tema presente!)
-- âœ… Fase 4 seed: "@noticias aquisiÃ§Ãµes HEADHUNTING Brasil" (tema presente!)
-- âš ï¸ SEM tema: queries genÃ©ricas que retornam noise (currÃ­culos, vagas, etc)
+**OBSERVAÇÃO CRÍTICA sobre o exemplo acima:**
+- ✅ Fase 1 seed: "volume fees EXECUTIVE SEARCH Brasil" (tema presente!)
+- ✅ Fase 2 seed: "tendências serviços HEADHUNTING Brasil" (tema presente!)
+- ✅ Fase 3 seed: "reputação players EXECUTIVE SEARCH Brasil" (tema presente!)
+- ✅ Fase 4 seed: "@noticias aquisições HEADHUNTING Brasil" (tema presente!)
+- ⚠️ SEM tema: queries genéricas que retornam noise (currículos, vagas, etc)
 
-ðŸŽ¯ AGORA CRIE SEU PLANO:
+🎯 AGORA CRIE SEU PLANO:
 
-âš ï¸ **CRÃTICO - POLÃTICAS DE phase_type:**
-- **industry**: panorama setorial (volume, tendÃªncias). must_terms: termos setoriais + geo (â‰¤5). time_hint: 1y ou 3y
-- **profiles**: perfis especÃ­ficos de players. must_terms: **TODOS** os players + geo. time_hint: 3y
-- **news**: eventos/notÃ­cias do setor. must_terms: **TODOS** os players + geo. time_hint: 1y (padrÃ£o) OU 90d (apenas breaking news explÃ­cito)
-  - âš ï¸ NOVO (v4.4): News padrÃ£o = 1y (captura eventos relevantes 12 meses)
-  - âš ï¸ ExceÃ§Ã£o: 90d apenas se objective menciona "Ãºltimos 90 dias" / "Ãºltimos 3 meses" / "breaking news"
-- **regulatory**: marcos regulatÃ³rios. must_terms: leis/normas + geo. time_hint: 1y ou 3y
-- **financials**: mÃ©tricas financeiras. must_terms: players + mÃ©tricas. time_hint: 1y
-- **tech**: especificaÃ§Ãµes tÃ©cnicas. must_terms: tecnologias + componentes. time_hint: 1y
+⚠️ **CRÍTICO - POLÍTICAS DE phase_type:**
+- **industry**: panorama setorial (volume, tendências). must_terms: termos setoriais + geo (≤5). time_hint: 1y ou 3y
+- **profiles**: perfis específicos de players. must_terms: **TODOS** os players + geo. time_hint: 3y
+- **news**: eventos/notícias do setor. must_terms: **TODOS** os players + geo. time_hint: 1y (padrão) OU 90d (apenas breaking news explícito)
+  - ⚠️ NOVO (v4.4): News padrão = 1y (captura eventos relevantes 12 meses)
+  - ⚠️ Exceção: 90d apenas se objective menciona "últimos 90 dias" / "últimos 3 meses" / "breaking news"
+- **regulatory**: marcos regulatórios. must_terms: leis/normas + geo. time_hint: 1y ou 3y
+- **financials**: métricas financeiras. must_terms: players + métricas. time_hint: 1y
+- **tech**: especificações técnicas. must_terms: tecnologias + componentes. time_hint: 1y
 
-**INSTRUÃ‡Ã•ES FINAIS:**
+**INSTRUÇÕES FINAIS:**
 
-**ðŸ”’ VALIDAÃ‡ÃƒO DE KEY_QUESTIONS COVERAGE (P0 - CRÃTICO):**
+**🔒 VALIDAÇÃO DE KEY_QUESTIONS COVERAGE (P0 - CRÍTICO):**
 Antes de retornar o plano, verifique OBRIGATORIAMENTE:
-1. **Para CADA key_question** listada no payload do Estrategista â†’ identifique qual fase a responde
-2. **Se alguma key_question NÃƒO for coberta** â†’ crie fase adicional especÃ­fica
-3. **Mapeamento mental obrigatÃ³rio:**
-   - Key_Q "Qual volume...?" â†’ Fase "Volume setorial" (industry, 1y ou 3y)
-   - Key_Q "Quais tendÃªncias...?" â†’ Fase "TendÃªncias/evoluÃ§Ã£o" (industry, 1y)  â† CRÃTICO!
-   - Key_Q "Qual reputaÃ§Ã£o...?" â†’ Fase "Perfis players" (profiles, 3y)
-   - Key_Q "Quais eventos/notÃ­cias...?" â†’ Fase "Eventos mercado" (news, 1y)  â† v4.4: 1y padrÃ£o!
-   - Key_Q "Ãšltimos dias/90d...?" â†’ Fase "Breaking news" (news, 90d)  â† v4.4: apenas se explÃ­cito!
-   - Key_Q "Quais riscos/oportunidades 3-5 anos?" â†’ Fase "TendÃªncias/evoluÃ§Ã£o" (industry, 1y)
+1. **Para CADA key_question** listada no payload do Estrategista → identifique qual fase a responde
+2. **Se alguma key_question NÃO for coberta** → crie fase adicional específica
+3. **Mapeamento mental obrigatório:**
+   - Key_Q "Qual volume...?" → Fase "Volume setorial" (industry, 1y ou 3y)
+   - Key_Q "Quais tendências...?" → Fase "Tendências/evolução" (industry, 1y)  ← CRÍTICO!
+   - Key_Q "Qual reputação...?" → Fase "Perfis players" (profiles, 3y)
+   - Key_Q "Quais eventos/notícias...?" → Fase "Eventos mercado" (news, 1y)  ← v4.4: 1y padrão!
+   - Key_Q "Últimos dias/90d...?" → Fase "Breaking news" (news, 90d)  ← v4.4: apenas se explícito!
+   - Key_Q "Quais riscos/oportunidades 3-5 anos?" → Fase "Tendências/evolução" (industry, 1y)
 
-**SE** alguma key_question nÃ£o tiver fase correspondente â†’ **ERRO CRÃTICO** â†’ crie fase adicional.
+**SE** alguma key_question não tiver fase correspondente → **ERRO CRÍTICO** → crie fase adicional.
 
-**EXEMPLO DE VALIDAÃ‡ÃƒO:**
+**EXEMPLO DE VALIDAÇÃO:**
 ```
 10 key_questions fornecidas:
-âœ“ Q1-Q3 â†’ Fase 1 (industry 3y)
-âœ“ Q4-Q6 â†’ Fase 2 (profiles 3y) 
-âœ“ Q7-Q9 â†’ Fase 3 (tendÃªncias 1y)  â† Se esta fase nÃ£o existir, 30% das questions ficam sem resposta!
-âœ“ Q10 â†’ Fase 4 (news 90d)
+✓ Q1-Q3 → Fase 1 (industry 3y)
+✓ Q4-Q6 → Fase 2 (profiles 3y) 
+✓ Q7-Q9 → Fase 3 (tendências 1y)  ← Se esta fase não existir, 30% das questions ficam sem resposta!
+✓ Q10 → Fase 4 (news 90d)
 ```
 
-**APÃ“S VALIDAÃ‡ÃƒO:**
-1. Use as key_questions e entities jÃ¡ analisadas (acima) para criar as fases
+**APÓS VALIDAÇÃO:**
+1. Use as key_questions e entities já analisadas (acima) para criar as fases
 2. Atribua phase_type correto para cada fase
-3. Aplique as polÃ­ticas de must_terms por phase_type
-4. Retorne APENAS JSON PURO (sem markdown, sem texto extra, sem raciocÃ­nio)
+3. Aplique as políticas de must_terms por phase_type
+4. Retorne APENAS JSON PURO (sem markdown, sem texto extra, sem raciocínio)
 
-ðŸŽ¯ **VALIDAÃ‡ÃƒO DE RESEARCH_OBJECTIVES COVERAGE (P0 - CRÃTICO):**
+🎯 **VALIDAÇÃO DE RESEARCH_OBJECTIVES COVERAGE (P0 - CRÍTICO):**
 
 Antes de retornar o plano, verifique OBRIGATORIAMENTE:
 
-1. **Para CADA research_objective** listado no payload â†’ identifique qual fase cobre
-2. **Se algum objective NÃƒO for coberto** â†’ ajuste objectives de fase ou crie fase adicional
+1. **Para CADA research_objective** listado no payload → identifique qual fase cobre
+2. **Se algum objective NÃO for coberto** → ajuste objectives de fase ou crie fase adicional
 
 **EXEMPLO DE MAPEAMENTO:**
 ```
 RESEARCH_OBJECTIVES do estrategista:
-1. "Mapear principais players..." â†’ Fase "Perfis players" (phase_type: profiles)
-2. "Comparar ofertas e pricing..." â†’ Fase "Modelos de preÃ§o" (phase_type: industry)
-3. "Segmentar demanda por setor..." â†’ Fase "Panorama mercado" (phase_type: industry)
-4. "Avaliar reputaÃ§Ã£o e mÃ­dia..." â†’ Fase "Perfis players" (phase_type: profiles)
-5. "Identificar riscos regulatÃ³rios..." â†’ Fase "Panorama mercado" (objective especÃ­fico)
-6. "Recomendar estratÃ©gias M&A..." â†’ Fase "TendÃªncias e oportunidades" (phase_type: industry)
-7. "Produzir matriz competitiva..." â†’ Fase "Perfis players" (phase_type: profiles)
+1. "Mapear principais players..." → Fase "Perfis players" (phase_type: profiles)
+2. "Comparar ofertas e pricing..." → Fase "Modelos de preço" (phase_type: industry)
+3. "Segmentar demanda por setor..." → Fase "Panorama mercado" (phase_type: industry)
+4. "Avaliar reputação e mídia..." → Fase "Perfis players" (phase_type: profiles)
+5. "Identificar riscos regulatórios..." → Fase "Panorama mercado" (objective específico)
+6. "Recomendar estratégias M&A..." → Fase "Tendências e oportunidades" (phase_type: industry)
+7. "Produzir matriz competitiva..." → Fase "Perfis players" (phase_type: profiles)
 ```
 
-**SE** algum research_objective nÃ£o tiver fase que o cubra â†’ ajuste fase existente ou crie nova.
+**SE** algum research_objective não tiver fase que o cubra → ajuste fase existente ou crie nova.
 
-**REGRA:** Objectives de fase devem ser MAIS ESPECÃFICOS que research_objectives (subconjunto detalhado).
-- âŒ ERRADO: Objective genÃ©rico "Analisar mercado" (nÃ£o cobre research_objective especÃ­fico)
-- âœ… CERTO: Objective "Quantificar market share por tipo de player e identificar riscos regulatÃ³rios" (cobre research_objectives 1, 3, 5)
+**REGRA:** Objectives de fase devem ser MAIS ESPECÍFICOS que research_objectives (subconjunto detalhado).
+- ❌ ERRADO: Objective genérico "Analisar mercado" (não cobre research_objective específico)
+- ✅ CERTO: Objective "Quantificar market share por tipo de player e identificar riscos regulatórios" (cobre research_objectives 1, 3, 5)
 
 **DICA:** Se um research_objective menciona "matriz competitiva", uma fase DEVE ter isso explicitamente no objective.
-Se menciona "M&A/expansÃ£o", uma fase DEVE cobrir fusÃµes/aquisiÃ§Ãµes/parcerias.
+Se menciona "M&A/expansão", uma fase DEVE cobrir fusões/aquisições/parcerias.
 
 ---
 
-ðŸŽ¯ **ACCEPTANCE CRITERIA (VALIDAÃ‡ÃƒO FINAL OBRIGATÃ“RIA):**
+🎯 **ACCEPTANCE CRITERIA (VALIDAÇÃO FINAL OBRIGATÓRIA):**
 
 Antes de retornar o JSON, verifique:
 
-âœ… **ESTRUTURA:**
-- [ ] 1-3 fases criadas (pode ser menos que o mÃ¡ximo se suficiente)
-- [ ] Cada fase tem TODOS os campos obrigatÃ³rios
-- [ ] JSON vÃ¡lido (sem markdown, sem comentÃ¡rios, sem texto extra)
+✅ **ESTRUTURA:**
+- [ ] 1-3 fases criadas (pode ser menos que o máximo se suficiente)
+- [ ] Cada fase tem TODOS os campos obrigatórios
+- [ ] JSON válido (sem markdown, sem comentários, sem texto extra)
 
-âœ… **SEED_QUERY (curta, para UI/telemetria):**
+✅ **SEED_QUERY (curta, para UI/telemetria):**
 - [ ] 3-6 palavras (excluindo @noticias)
 - [ ] SEM operadores (site:, filetype:, OR, AND, aspas)
-- [ ] ContÃ©m tema central + aspecto + geo
+- [ ] Contém tema central + aspecto + geo
 - [ ] Se 1-3 entidades: TODOS os nomes na seed_query
 
-âœ… **SEED_CORE (rica, para Discovery):**
+✅ **SEED_CORE (rica, para Discovery):**
 - [ ] 12-200 caracteres (1 frase completa)
 - [ ] SEM operadores
 - [ ] Inclui: entidades + tema + aspecto + recorte geotemporal
-- [ ] NÃƒO repete seed_query sem adicionar pelo menos 1 aspecto + 1 entidade
+- [ ] NÃO repete seed_query sem adicionar pelo menos 1 aspecto + 1 entidade
 
-âœ… **MUST_TERMS:**
-- [ ] 2-8 termos (nÃ£o vazio, nÃ£o excessivo)
-- [ ] TODAS as entidades canÃ´nicas incluÃ­das (quando aplicÃ¡vel)
+✅ **MUST_TERMS:**
+- [ ] 2-8 termos (não vazio, não excessivo)
+- [ ] TODAS as entidades canônicas incluídas (quando aplicável)
 
-âœ… **OBJECTIVE:**
-- [ ] Pergunta verificÃ¡vel (verbo: mapear/identificar/comparar/quantificar)
-- [ ] CondiÃ§Ã£o de sucesso clara (ex: "Quantificar market share por player")
-- [ ] NÃƒO genÃ©rico (ex: "entender melhor", "explorar")
+✅ **OBJECTIVE:**
+- [ ] Pergunta verificável (verbo: mapear/identificar/comparar/quantificar)
+- [ ] Condição de sucesso clara (ex: "Quantificar market share por player")
+- [ ] NÃO genérico (ex: "entender melhor", "explorar")
 
-âœ… **MECE (NÃƒO OVERLAP COM DISCOVERY):**
-- [ ] NÃƒO gerar variaÃ§Ãµes da seed (Discovery farÃ¡ isso)
-- [ ] NÃƒO criar mÃºltiplas queries por fase (apenas 1 seed_query + 1 seed_core)
+✅ **MECE (NÃO OVERLAP COM DISCOVERY):**
+- [ ] NÃO gerar variações da seed (Discovery fará isso)
+- [ ] NÃO criar múltiplas queries por fase (apenas 1 seed_query + 1 seed_core)
 
-âœ… **NEWS PHASES:**
-- [ ] time_hint.recency = "1y" (padrÃ£o) OU "90d" (apenas se explÃ­cito)
+✅ **NEWS PHASES:**
+- [ ] time_hint.recency = "1y" (padrão) OU "90d" (apenas se explícito)
 - [ ] time_hint.strict = true
 - [ ] @noticias na seed_query
 
-ðŸ”Ž **SELF-CHECK (execute ANTES de retornar JSON):**
+🔎 **SELF-CHECK (execute ANTES de retornar JSON):**
 
 Antes de retornar o plano, verifique OBRIGATORIAMENTE cada item abaixo:
 
-1ï¸âƒ£ **Todas as key_questions cobertas?**
-   - Cada KEY_QUESTION do payload tem â‰¥1 fase correspondente?
-   - Se alguma ficou Ã³rfÃ£ â†’ crie fase adicional
-2ï¸âƒ£ **NotÃ­cias (se pedidas)?**
-   - Se usuÃ¡rio mencionou "notÃ­cias" OU Ã© "estudo de mercado" â†’ existe fase type="news"?
-   - Fase news tem time_hint.recency="1y" (nÃ£o 90d) e strict=true?
+1️⃣ **Todas as key_questions cobertas?**
+   - Cada KEY_QUESTION do payload tem ≥1 fase correspondente?
+   - Se alguma ficou órfã → crie fase adicional
+2️⃣ **Notícias (se pedidas)?**
+   - Se usuário mencionou "notícias" OU é "estudo de mercado" → existe fase type="news"?
+   - Fase news tem time_hint.recency="1y" (não 90d) e strict=true?
    - Seed_query da fase news tem "@noticias" + tema + entidades?
-3ï¸âƒ£ **Seeds vÃ¡lidas?**
+3️⃣ **Seeds válidas?**
    - Cada seed_query tem 3-8 palavras (excluindo @noticias)?
-   - seed_query NÃƒO usa operadores (site:, filetype:, OR, AND, aspas)?
-   - seed_core tem â‰¥12 caracteres e Ã© DIFERENTE de seed_query?
+   - seed_query NÃO usa operadores (site:, filetype:, OR, AND, aspas)?
+   - seed_core tem ≥12 caracteres e é DIFERENTE de seed_query?
    - seed_core inclui pelo menos 1 entidade + 1 aspecto adicional?
-   - seed_core Ã© 1 frase rica (nÃ£o apenas palavras soltas)?
-4ï¸âƒ£ **ENTIDADES (cobertura mÃ­nima):**
-   - Se â‰¤3 entidades â†’ elas aparecem em must_terms de pelo menos 70% das fases?
+   - seed_core é 1 frase rica (não apenas palavras soltas)?
+4️⃣ **ENTIDADES (cobertura mínima):**
+   - Se ≤3 entidades → elas aparecem em must_terms de pelo menos 70% das fases?
    - Seed_query das fases de profiles/news incluem TODAS as entidades?
-   - Se >3 entidades â†’ pelo menos as 3 principais em must_terms de cada fase?
+   - Se >3 entidades → pelo menos as 3 principais em must_terms de cada fase?
 
-5ï¸âƒ£ **MECE (sem overlap):**
-   - Objectives das fases sÃ£o mutualmente exclusivos (nÃ£o overlap Ã³bvio)?
-   - Se detectou overlap â†’ reescreva objectives antes de retornar
-   - Fases cobrem TODO o escopo (nenhuma key_question Ã³rfÃ£)?
-âœ… **SEED_CORE VALIDATION:**
-- [ ] TODAS as fases tÃªm seed_core (12-200 chars)
-- [ ] seed_core â‰  seed_query (seed_core Ã© EXPANSÃƒO)
+5️⃣ **MECE (sem overlap):**
+   - Objectives das fases são mutualmente exclusivos (não overlap óbvio)?
+   - Se detectou overlap → reescreva objectives antes de retornar
+   - Fases cobrem TODO o escopo (nenhuma key_question órfã)?
+✅ **SEED_CORE VALIDATION:**
+- [ ] TODAS as fases têm seed_core (12-200 chars)
+- [ ] seed_core ≠ seed_query (seed_core é EXPANSÃO)
 - [ ] seed_core inclui: entidades + tema + aspecto + geo/temporal
 - [ ] seed_core SEM operadores (@, site:, OR, AND)
 
-âœ… **Se todos os checks passarem â†’ retorne JSON**
-âŒ **Se algum falhar â†’ corrija ANTES de retornar**
+✅ **Se todos os checks passarem → retorne JSON**
+❌ **Se algum falhar → corrija ANTES de retornar**
 
-FORMATO DE SAÃDA:
+FORMATO DE SAÍDA:
 [JSON do plano completo]
 """
     )
 def _build_analyst_prompt(query: str, phase_context: Dict = None) -> str:
     """Build unified Analyst prompt used by both Manual and SDK routes."""
-    # Extrair informaÃ§Ãµes da fase atual
+    # Extrair informações da fase atual
     phase_info = ""
     if phase_context:
         phase_name = phase_context.get("name", "Fase atual")
-        # Contract usa "objetivo" (PT), nÃ£o "objective" (EN)
+        # Contract usa "objetivo" (PT), não "objective" (EN)
         phase_objective = phase_context.get("objetivo") or phase_context.get(
             "objective", ""
         )
@@ -4684,38 +4684,38 @@ def _build_analyst_prompt(query: str, phase_context: Dict = None) -> str:
         )
 
         if must_terms:
-            # Mostrar atÃ© 8 termos prioritÃ¡rios (evitar prompt muito longo)
+            # Mostrar até 8 termos prioritários (evitar prompt muito longo)
             terms_display = ", ".join(must_terms[:8])
             if len(must_terms) > 8:
                 terms_display += f" (e mais {len(must_terms) - 8})"
-            phase_info += f"\n**Termos PrioritÃ¡rios:** {terms_display}"
+            phase_info += f"\n**Termos Prioritários:** {terms_display}"
 
             # P0: Enfatizar obrigatoriedade dos must_terms
             phase_info += f"""
-âš ï¸ **MUST_TERMS SÃƒO OBRIGATÃ“RIOS:**
-- TODOS os fatos extraÃ­dos DEVEM mencionar pelo menos 1 termo prioritÃ¡rio
-- Se contexto nÃ£o menciona must_terms, reportar em lacunas (ex: "Falta dados sobre [termo]")
-- Coverage_score deve penalizar ausÃªncia de must_terms
+⚠️ **MUST_TERMS SÃO OBRIGATÓRIOS:**
+- TODOS os fatos extraídos DEVEM mencionar pelo menos 1 termo prioritário
+- Se contexto não menciona must_terms, reportar em lacunas (ex: "Falta dados sobre [termo]")
+- Coverage_score deve penalizar ausência de must_terms
 - Exemplo: Query "market share Flow Executive Brasil" + must_terms ["Flow Executive", "market share", "Brasil"]
-  â†’ âœ… Fato CORRETO: "Flow Executive tem 15% de market share no Brasil" (3/3 must_terms)
-  â†’ âŒ Fato INCORRETO: "Mercado de consultoria no Brasil cresceu 10%" (1/3 must_terms - genÃ©rico demais)"""
+  → ✅ Fato CORRETO: "Flow Executive tem 15% de market share no Brasil" (3/3 must_terms)
+  → ❌ Fato INCORRETO: "Mercado de consultoria no Brasil cresceu 10%" (1/3 must_terms - genérico demais)"""
 
         if avoid_terms:
-            # Mostrar atÃ© 5 termos a evitar
+            # Mostrar até 5 termos a evitar
             avoid_display = ", ".join(avoid_terms[:5])
             if len(avoid_terms) > 5:
                 avoid_display += f" (e mais {len(avoid_terms) - 5})"
             phase_info += f"\n**Evitar:** {avoid_display}"
 
-    # Extrair objetivo especÃ­fico para enfatizar
+    # Extrair objetivo específico para enfatizar
     objective_emphasis = ""
     if phase_context:
-        # Contract usa "objetivo" (PT), nÃ£o "objective" (EN)
+        # Contract usa "objetivo" (PT), não "objective" (EN)
         obj = phase_context.get("objetivo") or phase_context.get("objective", "")
         if obj:
-            objective_emphasis = f"\n\nðŸŽ¯ **SUA MISSÃƒO ESPECÃFICA NESTA FASE:**\n{obj}\n\n**FOQUE APENAS** em extrair fatos que RESPONDEM DIRETAMENTE esta pergunta/objetivo!"
+            objective_emphasis = f"\n\n🎯 **SUA MISSÃO ESPECÍFICA NESTA FASE:**\n{obj}\n\n**FOQUE APENAS** em extrair fatos que RESPONDEM DIRETAMENTE esta pergunta/objetivo!"
 
-    # Usar dicionÃ¡rios globais de prompts
+    # Usar dicionários globais de prompts
     system_prompt = PROMPTS["analyst_system"]
     calibration_rules = PROMPTS["analyst_calibration"]
     
@@ -4725,18 +4725,18 @@ def _build_analyst_prompt(query: str, phase_context: Dict = None) -> str:
         + calibration_rules
         + "\n\nJSON:\n"
         + "{\n"
-        + '  "summary": "Resumo FOCADO NO OBJETIVO da fase (nÃ£o genÃ©rico!)",\n'
+        + '  "summary": "Resumo FOCADO NO OBJETIVO da fase (não genérico!)",\n'
         + '  "facts": [\n'
         + '    {\n'
         + '      "texto": "Fato que RESPONDE ao objetivo da fase",\n'
-        + '      "confianÃ§a": "alta|mÃ©dia|baixa", \n'
+        + '      "confiança": "alta|média|baixa", \n'
         + '      "evidencias": [{"url": "...", "trecho": "..."}]\n'
         + '    }\n'
         + '  ],\n'
         + '  "lacunas": ["O que AINDA FALTA para responder completamente o objetivo"],\n'
         + '  "self_assessment": {\n'
         + '    "coverage_score": 0.7,\n'
-        + '    "confidence": "alta|mÃ©dia|baixa",\n'
+        + '    "confidence": "alta|média|baixa",\n'
         + '    "gaps_critical": true,\n'
         + '    "suggest_refine": false,\n'
         + '    "suggest_pivot": true,\n'
@@ -4746,8 +4746,8 @@ def _build_analyst_prompt(query: str, phase_context: Dict = None) -> str:
         + "Retorne APENAS JSON."
     )
 
-    # ðŸ”´ FIX P0: Usar str.replace em vez de .format para evitar KeyError com literais JSON no template
-    # O template contÃ©m exemplos JSON com {"summary": ...} que .format() interpreta como placeholder
+    # 🔴 FIX P0: Usar str.replace em vez de .format para evitar KeyError com literais JSON no template
+    # O template contém exemplos JSON com {"summary": ...} que .format() interpreta como placeholder
     final_prompt = prompt_template.replace("{query_text}", query)
     final_prompt = final_prompt.replace("{phase_block}", phase_info)
     final_prompt = final_prompt.replace("{objective_block}", objective_emphasis)
@@ -4756,17 +4756,17 @@ def _build_analyst_prompt(query: str, phase_context: Dict = None) -> str:
 class JudgeLLM:
     def __init__(self, valves):
         self.valves = valves
-        # Usar modelo especÃ­fico se configurado, senÃ£o usa modelo padrÃ£o
+        # Usar modelo específico se configurado, senão usa modelo padrão
         model = valves.LLM_MODEL_JUDGE or valves.LLM_MODEL
         self.model_name = model
         self.llm = _get_llm(valves, model_name=model)
-        # Base kwargs: serÃ£o filtrados por get_safe_llm_params (GPT-5 nÃ£o aceita temperature)
+        # Base kwargs: serão filtrados por get_safe_llm_params (GPT-5 não aceita temperature)
         self.generation_kwargs = {"temperature": 0.3}
 
     def _calculate_phase_score(self, metrics: Dict[str, float]) -> float:
-        """Calcula phase_score auditÃ¡vel usando pesos configurÃ¡veis (v4.7)
+        """Calcula phase_score auditável usando pesos configuráveis (v4.7)
 
-        FÃ³rmula:
+        Fórmula:
         phase_score = w_cov * coverage
                     + w_nf * novel_fact_ratio
                     + w_nd * novel_domain_ratio
@@ -4778,7 +4778,7 @@ class JudgeLLM:
                     domain_diversity, contradiction_score
 
         Returns:
-            Score normalizado 0.0-1.0 (pode ser negativo se contradiÃ§Ãµes altas)
+            Score normalizado 0.0-1.0 (pode ser negativo se contradições altas)
         """
         weights = getattr(
             self.valves,
@@ -4808,28 +4808,16 @@ class JudgeLLM:
 
         return round(score, 3)
 
-    def _calculate_local_completeness(self, metrics: dict, analysis: dict, phase_context: dict) -> float:
-        """Calculate local completeness for current phase (0.0-1.0)"""
-        w1, w2, w3, w4 = 0.40, 0.30, 0.20, 0.50
-        coverage = metrics.get("coverage", 0.0)
-        facts = analysis.get("facts", [])
-        fact_quality = sum(1 for f in facts if f.get("confiança") == "alta") / max(len(facts), 1) if facts else 0.0
-        unique_domains = len(set(f.get("fonte", {}).get("dominio", "unknown") for f in facts))
-        source_diversity = min(unique_domains / 3.0, 1.0)
-        contradiction_score = metrics.get("contradiction_score", 0.0)
-        completeness = max(0.0, min(1.0, w1 * coverage + w2 * fact_quality + w3 * source_diversity - w4 * contradiction_score))
-        return completeness
-
     def _switch_seed_family(self, current_family: str) -> str:
-        """Troca famÃ­lia de seed para exploraÃ§Ã£o sistemÃ¡tica (v4.7)
+        """Troca família de seed para exploração sistemática (v4.7)
 
-        Ciclo: entity-centric â†’ problem-centric â†’ outcome-centric â†’ regulatory â†’ counterfactual â†’ entity-centric
+        Ciclo: entity-centric → problem-centric → outcome-centric → regulatory → counterfactual → entity-centric
 
         Args:
-            current_family: FamÃ­lia atual
+            current_family: Família atual
 
         Returns:
-            PrÃ³xima famÃ­lia no ciclo
+            Próxima família no ciclo
         """
         family_order = [
             "entity-centric",
@@ -4844,7 +4832,7 @@ class JudgeLLM:
             next_idx = (idx + 1) % len(family_order)
             return family_order[next_idx]
         except ValueError:
-            # FamÃ­lia desconhecida, retornar default
+            # Família desconhecida, retornar default
             return "problem-centric"  # Primeira alternativa ao entity-centric
 
     def _calculate_weighted_fact_delta(self, analysis: dict) -> float:
@@ -4852,9 +4840,9 @@ class JudgeLLM:
         Calculate weighted fact delta based on confidence scores.
         
         WIN #2: Instead of simple count, weight facts by confidence:
-        - alta confianÃ§a = 1.0
-        - mÃ©dia confianÃ§a = 0.7  
-        - baixa confianÃ§a = 0.4
+        - alta confiança = 1.0
+        - média confiança = 0.7  
+        - baixa confiança = 0.4
         
         Args:
             analysis: Analysis dict containing facts list
@@ -4869,14 +4857,14 @@ class JudgeLLM:
         # Map confidence levels to weights
         confidence_weights = {
             "alta": 1.0,
-            "mÃ©dia": 0.7,
+            "média": 0.7,
             "baixa": 0.4
         }
         
         # Calculate weighted sum
         weighted_sum = 0.0
         for fact in facts:
-            confidence = fact.get("confianÃ§a", "mÃ©dia")  # Default to mÃ©dia
+            confidence = fact.get("confiança", "média")  # Default to média
             weight = confidence_weights.get(confidence, 0.7)  # Default weight
             weighted_sum += weight
             
@@ -4993,33 +4981,33 @@ class JudgeLLM:
     def _validate_quality_rails(
         self, analysis, phase_context, intent_profile: Optional[str] = None
     ):
-        """Gates MÃNIMOS - apenas safety net para casos extremos
+        """Gates MÍNIMOS - apenas safety net para casos extremos
 
-        REBALANCED (v4.5.1): Reduzido de 6 gates rÃ­gidos para 2 gates mÃ­nimos
+        REBALANCED (v4.5.1): Reduzido de 6 gates rígidos para 2 gates mínimos
         Filosofia: Prompts guiam, gates alertam casos extremos
         """
         facts = analysis.get("facts", [])
 
-        # Gate 1: ZERO fatos (caso extremo Ã³bvio)
+        # Gate 1: ZERO fatos (caso extremo óbvio)
         if not facts:
             return {
                 "passed": False,
-                "reason": "Sem fatos encontrados - impossÃ­vel responder ao objetivo",
-                "suggested_query": "buscar fontes especÃ­ficas e verificÃ¡veis",
+                "reason": "Sem fatos encontrados - impossível responder ao objetivo",
+                "suggested_query": "buscar fontes específicas e verificáveis",
             }
 
-        # Gate 2: CombinaÃ§Ã£o de problemas (evidÃªncia fraca + coverage baixo)
-        # Apenas bloqueia quando AMBOS sÃ£o muito baixos
+        # Gate 2: Combinação de problemas (evidência fraca + coverage baixo)
+        # Apenas bloqueia quando AMBOS são muito baixos
         metrics = _extract_quality_metrics(facts)
         evidence_coverage = metrics["facts_with_evidence"] / len(facts) if facts else 0
         coverage_score = analysis.get("self_assessment", {}).get("coverage_score", 0)
 
-        # NOVO THRESHOLD: 50% evidÃªncia + 50% coverage (muito mais permissivo)
+        # NOVO THRESHOLD: 50% evidência + 50% coverage (muito mais permissivo)
         if evidence_coverage < 0.5 and coverage_score < 0.5:
             return {
                 "passed": False,
-                "reason": f"Qualidade muito baixa: {evidence_coverage*100:.0f}% evidÃªncia + {coverage_score*100:.0f}% coverage (ambos <50%)",
-                "suggested_query": "buscar fontes com dados especÃ­ficos e verificÃ¡veis",
+                "reason": f"Qualidade muito baixa: {evidence_coverage*100:.0f}% evidência + {coverage_score*100:.0f}% coverage (ambos <50%)",
+                "suggested_query": "buscar fontes com dados específicos e verificáveis",
             }
 
         return {"passed": True}
@@ -5027,7 +5015,7 @@ class JudgeLLM:
     def _check_evidence_staleness(
         self, facts, phase_context, intent_profile: Optional[str] = None
     ):
-        """Verifica staleness (recency) das evidÃªncias (P1.2) com gates por perfil"""
+        """Verifica staleness (recency) das evidências (P1.2) com gates por perfil"""
         if not facts:
             return {"passed": True}
 
@@ -5035,7 +5023,7 @@ class JudgeLLM:
         time_hint = phase_context.get("time_hint", {}) if phase_context else {}
         recency = time_hint.get("recency", "1y")
         strict = time_hint.get("strict", False)
-        # Aplicar gate por perfil (se perfil exigir strict, forÃ§a strict)
+        # Aplicar gate por perfil (se perfil exigir strict, força strict)
         try:
             profile = (
                 intent_profile
@@ -5049,14 +5037,14 @@ class JudgeLLM:
             pass
 
         if not strict:
-            return {"passed": True}  # Se nÃ£o Ã© strict, nÃ£o verifica staleness
+            return {"passed": True}  # Se não é strict, não verifica staleness
 
         # Converter recency para dias
         recency_days = self._parse_recency_to_days(recency)
         if recency_days is None:
-            return {"passed": True}  # Recency invÃ¡lido, nÃ£o verifica
+            return {"passed": True}  # Recency inválido, não verifica
 
-        # Verificar idade das evidÃªncias
+        # Verificar idade das evidências
         from datetime import datetime, timedelta
 
         cutoff_date = datetime.now() - timedelta(days=recency_days)
@@ -5077,7 +5065,7 @@ class JudgeLLM:
                         if ev_date < cutoff_date:
                             old_evidence_count += 1
                     except:
-                        # Se nÃ£o conseguir parsear, assumir que Ã© antiga
+                        # Se não conseguir parsear, assumir que é antiga
                         old_evidence_count += 1
 
         if total_evidence_count == 0:
@@ -5085,12 +5073,12 @@ class JudgeLLM:
 
         old_ratio = old_evidence_count / total_evidence_count
 
-        # KPI: se >50% das evidÃªncias sÃ£o antigas, bloquear DONE
+        # KPI: se >50% das evidências são antigas, bloquear DONE
         if old_ratio > 0.5:
             return {
                 "passed": False,
-                "reason": f"{old_ratio*100:.0f}% evidÃªncias fora da janela de {recency} (strict=true)",
-                "suggested_query": f"Buscar evidÃªncias mais recentes (Ãºltimos {recency})",
+                "reason": f"{old_ratio*100:.0f}% evidências fora da janela de {recency} (strict=true)",
+                "suggested_query": f"Buscar evidências mais recentes (últimos {recency})",
             }
 
         return {"passed": True}
@@ -5121,29 +5109,29 @@ class JudgeLLM:
         failed_queries: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         if not self.llm:
-            raise ValueError("LLM nÃ£o configurado")
+            raise ValueError("LLM não configurado")
 
         phase_info = ""
         if phase_context:
-            phase_info = f"\n**CritÃ©rios:** {', '.join(phase_context.get('accept_if_any_of', []))}"
+            phase_info = f"\n**Critérios:** {', '.join(phase_context.get('accept_if_any_of', []))}"
 
         # Build judge prompt inline (temporary implementation)
         prompt = f"""
-        Analise os resultados da pesquisa e decida o prÃ³ximo passo.
+        Analise os resultados da pesquisa e decida o próximo passo.
         
-        UsuÃ¡rio: {user_prompt}
-        AnÃ¡lise: {analysis}
+        Usuário: {user_prompt}
+        Análise: {analysis}
         Contexto da Fase: {phase_context}
         Loops de Telemetria: {len(telemetry_loops)}
         
         Retorne JSON com:
         - verdict: "done" | "refine" | "new_phase"
-        - reasoning: explicaÃ§Ã£o da decisÃ£o
-        - next_query: prÃ³xima query se refine
+        - reasoning: explicação da decisão
+        - next_query: próxima query se refine
         - phase_score: 0.0-1.0
         """
 
-        # Filtrar parÃ¢metros incompatÃ­veis com GPT-5/O1
+        # Filtrar parâmetros incompatíveis com GPT-5/O1
         safe_params = get_safe_llm_params(self.model_name, self.generation_kwargs)
 
         # Use retry function if enabled, otherwise single attempt
@@ -5169,15 +5157,15 @@ class JudgeLLM:
 
         parsed = parse_json_resilient(out.get("replies", [""])[0], mode="balanced", allow_arrays=False)
         if not parsed:
-            raise ValueError("Judge output invÃ¡lido")
+            raise ValueError("Judge output inválido")
 
-        # ===== JUDGE ENXUTO: 3 SINAIS AUTOMÃTICOS, 3 REGRAS MECE =====
-        # Filosofia: GenÃ©rico, sem thresholds manuais, sem whitelists
+        # ===== JUDGE ENXUTO: 3 SINAIS AUTOMÁTICOS, 3 REGRAS MECE =====
+        # Filosofia: Genérico, sem thresholds manuais, sem whitelists
 
-        # SINAL 1: Lacunas explÃ­citas (do Analyst)
+        # SINAL 1: Lacunas explícitas (do Analyst)
         has_lacunas = bool(analysis.get("lacunas"))
 
-        # SINAL 2: TraÃ§Ã£o (crescimento absoluto em domÃ­nios OU fatos)
+        # SINAL 2: Tração (crescimento absoluto em domínios OU fatos)
         traction = True  # Default para primeiro loop
         if telemetry_loops and len(telemetry_loops) >= 2:
             last = telemetry_loops[-1]
@@ -5186,7 +5174,7 @@ class JudgeLLM:
                 "unique_domains", 0
             )
             
-            # âœ… WIN #2: Weight traction by fact confidence instead of simple count
+            # ✅ WIN #2: Weight traction by fact confidence instead of simple count
             delta_facts = self._calculate_weighted_fact_delta(analysis)
             traction = (delta_domains > 0) or (delta_facts > 0)
 
@@ -5197,12 +5185,12 @@ class JudgeLLM:
             prev = telemetry_loops[-2]
             prev_prev = telemetry_loops[-3]
 
-            # Ãšltimo loop flat?
+            # Último loop flat?
             delta_d_last = last.get("unique_domains", 0) - prev.get("unique_domains", 0)
             delta_f_last = last.get("n_facts", 0) - prev.get("n_facts", 0)
             last_flat = (delta_d_last == 0) and (delta_f_last == 0)
 
-            # PenÃºltimo loop flat?
+            # Penúltimo loop flat?
             delta_d_prev = prev.get("unique_domains", 0) - prev_prev.get(
                 "unique_domains", 0
             )
@@ -5211,36 +5199,36 @@ class JudgeLLM:
 
             two_flat_loops = last_flat and prev_flat
 
-        # SINAL 4: Key Questions Status (do LLM Judge, nÃ£o heurÃ­stica)
-        # Judge LLM avalia: coverage, blind_spots, se descobertas invalidam hipÃ³teses
+        # SINAL 4: Key Questions Status (do LLM Judge, não heurística)
+        # Judge LLM avalia: coverage, blind_spots, se descobertas invalidam hipóteses
         key_questions_coverage = 1.0  # Default: 100%
         blind_spots = []
 
-        # Extrair key_questions_status do JSON do Judge (se disponÃ­vel)
+        # Extrair key_questions_status do JSON do Judge (se disponível)
         kq_status = parsed.get("key_questions_status", {})
         if kq_status:
             key_questions_coverage = float(kq_status.get("coverage", 1.0))
             blind_spots = kq_status.get("blind_spots", [])
 
-        # SINAL 5: Blind Spots CrÃ­ticos (descobertas que invalidam hipÃ³teses)
+        # SINAL 5: Blind Spots Críticos (descobertas que invalidam hipóteses)
         loops = len(telemetry_loops) if telemetry_loops else 0
         blind_spots_signal = bool(blind_spots) and (
             loops >= 1 or len(blind_spots) >= 3
         )
 
-        # ===== v4.7: CALCULAR PHASE_SCORE AUDITÃVEL =====
-        # Coletar mÃ©tricas necessÃ¡rias para o score
+        # ===== v4.7: CALCULAR PHASE_SCORE AUDITÁVEL =====
+        # Coletar métricas necessárias para o score
         facts = analysis.get("facts", [])
         lacunas = analysis.get("lacunas", [])
 
-        # MÃ©tricas de telemetria (Ãºltima iteraÃ§Ã£o)
+        # Métricas de telemetria (última iteração)
         last_loop = telemetry_loops[-1] if telemetry_loops else {}
         novel_fact_ratio = last_loop.get("new_facts_ratio", 0.0)
         novel_domain_ratio = last_loop.get("new_domains_ratio", 0.0)
         unique_domains = last_loop.get("unique_domains", 0)
 
         # Calcular domain_diversity (Herfindahl invertido ou simples ratio)
-        # SimplificaÃ§Ã£o: usar unique_domains / facts como proxy
+        # Simplificação: usar unique_domains / facts como proxy
         domain_diversity = (
             min(1.0, unique_domains / max(len(facts), 1)) if facts else 0.0
         )
@@ -5249,7 +5237,7 @@ class JudgeLLM:
         sa = analysis.get("self_assessment", {})
         contradiction_score = 0.0
         try:
-            # Se Analyst reportou contradiÃ§Ãµes, usar como score
+            # Se Analyst reportou contradições, usar como score
             contradictions_count = last_loop.get("contradictions", 0)
             if contradictions_count > 0:
                 contradiction_score = min(
@@ -5258,7 +5246,7 @@ class JudgeLLM:
         except Exception:
             pass
 
-        # Montar dict de mÃ©tricas para phase_score
+        # Montar dict de métricas para phase_score
         phase_metrics = {
             "coverage": key_questions_coverage,  # Do LLM Judge
             "novel_fact_ratio": novel_fact_ratio,
@@ -5270,13 +5258,6 @@ class JudgeLLM:
 
         # Calcular phase_score
         phase_score = self._calculate_phase_score(phase_metrics)
-        
-        # Calculate local completeness
-        completeness_local = self._calculate_local_completeness(
-            metrics=phase_metrics,
-            analysis=analysis,
-            phase_context=phase_context
-        )
 
         # Obter gates do perfil/phase_type
         phase_type = (
@@ -5302,19 +5283,19 @@ class JudgeLLM:
                     break
 
         # Calcular overlap_similarity (similaridade entre fatos desta fase vs anteriores)
-        # SimplificaÃ§Ã£o: usar novel_fact_ratio invertido como proxy
+        # Simplificação: usar novel_fact_ratio invertido como proxy
         overlap_similarity = 1.0 - novel_fact_ratio if novel_fact_ratio > 0 else 0.0
 
-        # ===== DECISÃƒO PROGRAMÃTICA BASEADA EM PHASE_SCORE (v4.7) =====
+        # ===== DECISÃO PROGRAMÁTICA BASEADA EM PHASE_SCORE (v4.7) =====
         programmatic_decision = {}
         seed_family_switch = None
 
-        # âœ… Reaproveitar new_phase do Judge LLM (se disponÃ­vel)
+        # ✅ Reaproveitar new_phase do Judge LLM (se disponível)
         judge_new_phase = parsed.get("new_phase", {})
 
-        # ===== SAFETY RAILS (prioridade mÃ¡xima, sobrescrevem score) =====
+        # ===== SAFETY RAILS (prioridade máxima, sobrescrevem score) =====
 
-        # Rail 1: ContradiÃ§Ãµes crÃ­ticas â†’ NEW_PHASE imediato com seed_family switch
+        # Rail 1: Contradições críticas → NEW_PHASE imediato com seed_family switch
         contradiction_hard_gate = getattr(self.valves, "CONTRADICTION_HARD_GATE", 0.75)
         if contradiction_score >= contradiction_hard_gate:
             current_family = (
@@ -5325,11 +5306,11 @@ class JudgeLLM:
             seed_family_switch = self._switch_seed_family(current_family)
             programmatic_decision = {
                 "verdict": "new_phase",
-                "reasoning": f"ContradiÃ§Ãµes crÃ­ticas ({contradiction_score:.2f} â‰¥ {contradiction_hard_gate}). Trocar Ã¢ngulo",
+                "reasoning": f"Contradições críticas ({contradiction_score:.2f} ≥ {contradiction_hard_gate}). Trocar ângulo",
                 "seed_family": seed_family_switch,
             }
 
-        # Rail 2: DuplicaÃ§Ã£o alta (overlap â‰¥ 0.90) â†’ REFINE
+        # Rail 2: Duplicação alta (overlap ≥ 0.90) → REFINE
         elif overlap_similarity >= 0.90:
             programmatic_decision = {
                 "verdict": "refine",
@@ -5338,17 +5319,17 @@ class JudgeLLM:
 
         # ===== REGRAS MECE BASEADAS EM PHASE_SCORE (v4.7) =====
 
-        # Regra 1: Score BOM + coverage OK â†’ DONE
+        # Regra 1: Score BOM + coverage OK → DONE
         elif (
             phase_score >= threshold
             and key_questions_coverage >= getattr(self.valves, "COVERAGE_TARGET", 0.70)
         ):
             programmatic_decision = {
                 "verdict": "done",
-                "reasoning": f"Phase score {phase_score:.2f} â‰¥ {threshold:.2f}, coverage {key_questions_coverage*100:.0f}% OK",
+                "reasoning": f"Phase score {phase_score:.2f} ≥ {threshold:.2f}, coverage {key_questions_coverage*100:.0f}% OK",
             }
 
-        # Regra 2: Score BAIXO + flat_streak atingido â†’ NEW_PHASE com seed_family switch
+        # Regra 2: Score BAIXO + flat_streak atingido → NEW_PHASE com seed_family switch
         elif phase_score < threshold and flat_streak >= required_flat_loops:
             current_family = (
                 phase_context.get("seed_family_hint", "entity-centric")
@@ -5358,81 +5339,81 @@ class JudgeLLM:
             seed_family_switch = self._switch_seed_family(current_family)
             programmatic_decision = {
                 "verdict": "new_phase",
-                "reasoning": f"Phase score {phase_score:.2f} < {threshold:.2f} apÃ³s {flat_streak} loops flat. Trocar famÃ­lia de exploraÃ§Ã£o",
+                "reasoning": f"Phase score {phase_score:.2f} < {threshold:.2f} após {flat_streak} loops flat. Trocar família de exploração",
                 "seed_family": seed_family_switch,
             }
 
-        # Regra 3: Score BAIXO mas ainda hÃ¡ traÃ§Ã£o â†’ REFINE
+        # Regra 3: Score BAIXO mas ainda há tração → REFINE
         elif phase_score < threshold and traction:
             programmatic_decision = {
                 "verdict": "refine",
-                "reasoning": f"Phase score {phase_score:.2f} < {threshold:.2f} mas hÃ¡ traÃ§Ã£o. Refinar",
+                "reasoning": f"Phase score {phase_score:.2f} < {threshold:.2f} mas há tração. Refinar",
             }
 
-        # Fallback: REFINE (caso nÃ£o se encaixe em nenhuma regra acima)
+        # Fallback: REFINE (caso não se encaixe em nenhuma regra acima)
         else:
             programmatic_decision = {
                 "verdict": "refine",
                 "reasoning": f"Score {phase_score:.2f}, coverage {key_questions_coverage*100:.0f}%. Continuar refinando",
             }
 
-        # Aplicar rails de qualidade programÃ¡ticos
+        # Aplicar rails de qualidade programáticos
         verdict = parsed.get("verdict", "done").strip()
         reasoning = parsed.get("reasoning", "").strip()
         next_query = parsed.get("next_query", "").strip()
 
-        # Salvar decisÃ£o original do Judge para comparaÃ§Ã£o
+        # Salvar decisão original do Judge para comparação
         original_verdict = verdict
         original_reasoning = reasoning
         modifications = []
 
-        # Se decisÃ£o programÃ¡tica for diferente de "done", usar ela (tem prioridade)
+        # Se decisão programática for diferente de "done", usar ela (tem prioridade)
         if (
             programmatic_decision.get("verdict")
             and programmatic_decision["verdict"] != "done"
         ):
             modifications.append(
-                f"Programmatic override: {original_verdict} â†’ {programmatic_decision['verdict']}"
+                f"Programmatic override: {original_verdict} → {programmatic_decision['verdict']}"
             )
             verdict = programmatic_decision["verdict"]
             reasoning = programmatic_decision["reasoning"]
             next_query = programmatic_decision.get("next_query", next_query)
 
-        # ðŸ”’ CONSISTENCY CHECK: Reasoning vs Verdict (3 camadas)
+        # 🔒 CONSISTENCY CHECK: Reasoning vs Verdict (3 camadas)
 
-        # Camada 1: Lacunas explÃ­citas do Analyst
+        # Camada 1: Lacunas explícitas do Analyst
         if verdict == "done" and has_lacunas:
             logger.warning(
-                f"[JUDGE] InconsistÃªncia: verdict=done mas {len(analysis.get('lacunas', []))} lacunas no Analyst"
+                f"[JUDGE] Inconsistência: verdict=done mas {len(analysis.get('lacunas', []))} lacunas no Analyst"
             )
             modifications.append(
-                f"Consistency check: done â†’ refine ({len(analysis.get('lacunas', []))} lacunas encontradas)"
+                f"Consistency check: done → refine ({len(analysis.get('lacunas', []))} lacunas encontradas)"
             )
             verdict = "refine"
-            reasoning = f"[AUTO-CORREÃ‡ÃƒO] Lacunas detectadas pelo Analyst. {reasoning}"
+            reasoning = f"[AUTO-CORREÇÃO] Lacunas detectadas pelo Analyst. {reasoning}"
 
-        # Camada 2: Key_questions coverage baixa (hipÃ³teses nÃ£o respondidas)
+        # Camada 2: Key_questions coverage baixa (hipóteses não respondidas)
         if verdict == "done" and key_questions_coverage < 0.70:
             logger.warning(
-                f"[JUDGE] InconsistÃªncia: verdict=done mas key_questions coverage={key_questions_coverage:.2f} < 0.70"
+                f"[JUDGE] Inconsistência: verdict=done mas key_questions coverage={key_questions_coverage:.2f} < 0.70"
             )
             modifications.append(
-                f"Consistency check: done â†’ refine (key_questions coverage {key_questions_coverage*100:.0f}% < 70%)"
+                f"Consistency check: done → refine (key_questions coverage {key_questions_coverage*100:.0f}% < 70%)"
             )
             verdict = "refine"
-            reasoning = f"[AUTO-CORREÃ‡ÃƒO] {key_questions_coverage*100:.0f}% das key_questions relevantes respondidas (< 70%). {reasoning}"
+            reasoning = f"[AUTO-CORREÇÃO] {key_questions_coverage*100:.0f}% das key_questions relevantes respondidas (< 70%). {reasoning}"
 
-        # Camada 3: Blind Spots crÃ­ticos (descobertas que mudam contexto)
-        # APENAS corrige DONE â†’ NEW_PHASE se Judge errou ao ignorar blind spots crÃ­ticos
+        # Camada 3: Blind Spots críticos (descobertas que mudam contexto)
+        # APENAS corrige DONE → NEW_PHASE se Judge errou ao ignorar blind spots críticos
         if verdict == "done" and blind_spots_signal:
             logger.warning(
-                f"[JUDGE] InconsistÃªncia: verdict=done mas {len(blind_spots)} blind_spots crÃ­ticos detectados"
+                f"[JUDGE] Inconsistência: verdict=done mas {len(blind_spots)} blind_spots críticos detectados"
             )
             modifications.append(
-                f"Consistency check: done â†’ new_phase ({len(blind_spots)} blind_spots crÃ­ticos)"
+                f"Consistency check: done → new_phase ({len(blind_spots)} blind_spots críticos)"
             )
             verdict = "new_phase"
-            reasoning = f"[AUTO-CORREÃ‡ÃƒO] Blind spots crÃ­ticos invalidam hipÃ³teses iniciais: {'; '.join(blind_spots[:2])}. {reasoning}"
+            reasoning = f"[AUTO-CORREÇÃO] Blind spots críticos invalidam hipóteses iniciais: {'; '.join(blind_spots[:2])}. {reasoning}"
 
         # Incluir nova fase se foi criada programaticamente
         new_phase = parsed.get("new_phase", {})
@@ -5443,7 +5424,7 @@ class JudgeLLM:
         if verdict == "new_phase" and new_phase:
             loop_number = len(telemetry_loops) if telemetry_loops else 0
             
-            # Rotate family only after loop â‰¥2 (third iteration)
+            # Rotate family only after loop ≥2 (third iteration)
             if loop_number >= 2:
                 current_family = (
                     phase_context.get("seed_family_hint", "entity-centric")
@@ -5459,12 +5440,12 @@ class JudgeLLM:
                     
                     # Update reasoning to document rotation
                     if "reasoning" in new_phase:
-                        new_phase["reasoning"] += f" MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                        new_phase["reasoning"] += f" Mudança de família: {current_family} → {new_family}"
                     else:
-                        new_phase["reasoning"] = f"MudanÃ§a de famÃ­lia: {current_family} â†’ {new_family}"
+                        new_phase["reasoning"] = f"Mudança de família: {current_family} → {new_family}"
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
-                    logger.info(f"[JUDGE] RotaÃ§Ã£o de famÃ­lia: {current_family} â†’ {new_family} (loop {loop_number})")
+                    logger.info(f"[JUDGE] Rotação de família: {current_family} → {new_family} (loop {loop_number})")
 
         # Guard 1: Anti-duplicate NEW_PHASE (from PipeHaystack)
         if verdict == "new_phase" and new_phase and full_contract:
@@ -5486,23 +5467,23 @@ class JudgeLLM:
                         f"[JUDGE] Duplicate phase detected (similarity {max_sim_score:.2f}): '{duplicate_phase.get('name', 'N/A')}'"
                     )
                     modifications.append(
-                        f"Anti-duplicate guard: new_phase â†’ refine (similarity {max_sim_score:.2f} with '{duplicate_phase.get('name', 'N/A')}')"
+                        f"Anti-duplicate guard: new_phase → refine (similarity {max_sim_score:.2f} with '{duplicate_phase.get('name', 'N/A')}')"
                     )
                     
                     # Convert to REFINE and reuse seed_query
                     verdict = "refine"
                     next_query = new_phase.get("seed_query", "")
-                    reasoning = f"[AUTO-CORREÃ‡ÃƒO] Fase proposta duplica '{duplicate_phase.get('name', 'fase existente')}'. Convertido para refine com query focada."
+                    reasoning = f"[AUTO-CORREÇÃO] Fase proposta duplica '{duplicate_phase.get('name', 'fase existente')}'. Convertido para refine com query focada."
                     new_phase = {}  # Clear new_phase
 
-        # ðŸ“Š FASE 1: Log JSON do Judge (observabilidade/auditoria)
+        # 📊 FASE 1: Log JSON do Judge (observabilidade/auditoria)
         decision = {
             "decision": verdict,
             "reason": reasoning,
             "coverage": phase_metrics.get("coverage", 0),
             "domains": len(phase_metrics.get("domains", set())),
             "evidence": phase_metrics.get("evidence_coverage", 0),
-            "staleness_ok": True,  # TODO: implementar staleness check se necessÃ¡rio
+            "staleness_ok": True,  # TODO: implementar staleness check se necessário
             "loops": f"{len(telemetry_loops) if telemetry_loops else 0}/{getattr(self.valves, 'MAX_AGENT_LOOPS', 2)}",
         }
         logger.info(f"[JUDGE]{json.dumps(decision, ensure_ascii=False)}")
@@ -5531,12 +5512,12 @@ class JudgeLLM:
                         logger.warning(f"[JUDGE] Proposed: '{next_lower}'")
                     
                     modifications.append(
-                        f"Anti-redundant refine: refine â†’ done (query similarity {similarity:.0%})"
+                        f"Anti-redundant refine: refine → done (query similarity {similarity:.0%})"
                     )
                     
                     # Force DONE instead of spinning with duplicate query
                     verdict = "done"
-                    reasoning = f"[AUTO-CORREÃ‡ÃƒO] Query proposta muito similar Ã  anterior ({similarity:.0%}). Parando para evitar repetiÃ§Ã£o inÃºtil."
+                    reasoning = f"[AUTO-CORREÇÃO] Query proposta muito similar à anterior ({similarity:.0%}). Parando para evitar repetição inútil."
                     next_query = ""
                     break
 
@@ -5548,12 +5529,11 @@ class JudgeLLM:
             "new_phase": new_phase,
             "unexpected_findings": parsed.get("unexpected_findings", []),
             "proposed_phase": new_phase,  # Para compatibilidade
-            # âœ… v4.7: MÃ©tricas auditÃ¡veis
+            # ✅ v4.7: Métricas auditáveis
             "phase_score": phase_score,
             "phase_metrics": phase_metrics,
-            "completeness_local": completeness_local,  # NEW: Local completeness score
-            "seed_family": seed_family_switch,  # Presente apenas se NEW_PHASE por exploraÃ§Ã£o
-            "modifications": modifications,  # Lista de modificaÃ§Ãµes aplicadas
+            "seed_family": seed_family_switch,  # Presente apenas se NEW_PHASE por exploração
+            "modifications": modifications,  # Lista de modificações aplicadas
             "telemetry_loops": telemetry_loops,  # Persist telemetry loops across iterations
         }
 
@@ -5562,145 +5542,145 @@ class JudgeLLM:
 
 PROMPTS = {
     # ===== PLANNER PROMPTS =====
-    "planner_system": """VocÃª Ã© o PLANNER. Crie um plano de pesquisa estruturado em ATÃ‰ {phases} fases (pode ser menos se suficiente).
+    "planner_system": """Você é o PLANNER. Crie um plano de pesquisa estruturado em ATÉ {phases} fases (pode ser menos se suficiente).
 
-ðŸŽ¯ FILOSOFIA DE PLANEJAMENTO:
-- Crie APENAS as fases NECESSÃRIAS para cobrir o objetivo
-- Melhor ter 2-3 fases bem focadas do que 4-5 genÃ©ricas
+🎯 FILOSOFIA DE PLANEJAMENTO:
+- Crie APENAS as fases NECESSÁRIAS para cobrir o objetivo
+- Melhor ter 2-3 fases bem focadas do que 4-5 genéricas
 - O Judge pode criar novas fases dinamicamente se descobrir lacunas
-- MÃ¡ximo permitido: {phases} fases (mas pode ser menos!)""",
+- Máximo permitido: {phases} fases (mas pode ser menos!)""",
 
     "planner_seed_rules": """
 **SEED_QUERY (3-8 palavras, SEM operadores):**
 - Estrutura: TEMA_CENTRAL + SETOR/CONTEXTO + ASPECTO + GEO
 - Se 1-3 entidades: incluir TODOS os nomes + contexto setorial
-- Se 4+ entidades: seed genÃ©rica + contexto setorial + TODOS em must_terms
-- @noticias: adicionar 3-6 palavras especÃ­ficas (eventos, tipos, aÃ§Ãµes)
-- **CRÃTICO**: Sempre incluir contexto setorial para evitar resultados irrelevantes
+- Se 4+ entidades: seed genérica + contexto setorial + TODOS em must_terms
+- @noticias: adicionar 3-6 palavras específicas (eventos, tipos, ações)
+- **CRÍTICO**: Sempre incluir contexto setorial para evitar resultados irrelevantes
 
 Exemplos:
-âœ… "Vila Nova Partners executive search Brasil" (entidade + setor)
-âœ… "Flow Executive search Brasil notÃ­cias" (entidade + setor + contexto)
-âœ… "RedeDr SÃ³ SaÃºde oncologia Brasil" (entidade + setor mÃ©dico)
-âœ… "volume autos elÃ©tricos Brasil" (4+ entidades + setor)
-âœ… "@noticias recalls veÃ­culos elÃ©tricos Brasil" (breaking news + setor)
-âŒ "Flow Brasil notÃ­cia" (falta contexto setorial!)
-âŒ "volume fees Brasil" (falta tema!)
-âŒ "buscar dados verificÃ¡veis" (genÃ©rico demais)""",
+✅ "Vila Nova Partners executive search Brasil" (entidade + setor)
+✅ "Flow Executive search Brasil notícias" (entidade + setor + contexto)
+✅ "RedeDr Só Saúde oncologia Brasil" (entidade + setor médico)
+✅ "volume autos elétricos Brasil" (4+ entidades + setor)
+✅ "@noticias recalls veículos elétricos Brasil" (breaking news + setor)
+❌ "Flow Brasil notícia" (falta contexto setorial!)
+❌ "volume fees Brasil" (falta tema!)
+❌ "buscar dados verificáveis" (genérico demais)""",
 
     "planner_time_windows": """
 **JANELAS TEMPORAIS:**
 
 | Recency | Uso | Exemplo |
 |---------|-----|---------|
-| **90d** | Breaking news explÃ­cito | "Ãºltimos 90 dias", "breaking news" |
-| **1y** | TendÃªncias/estado atual (DEFAULT news) | "eventos recentes", "aquisiÃ§Ãµes ano" |
-| **3y** | Panorama/contexto histÃ³rico | "evoluÃ§Ã£o setorial", "baseline" |
+| **90d** | Breaking news explícito | "últimos 90 dias", "breaking news" |
+| **1y** | Tendências/estado atual (DEFAULT news) | "eventos recentes", "aquisições ano" |
+| **3y** | Panorama/contexto histórico | "evolução setorial", "baseline" |
 
-**Regra PrÃ¡tica:**
-- News SEM prazo explÃ­cito â†’ 1y (captura 12 meses)
-- News COM "90 dias" â†’ 90d (breaking only)
-- Estudos de mercado â†’ 3y (contexto) + 1y (tendÃªncias) [OBRIGATÃ“RIO]""",
+**Regra Prática:**
+- News SEM prazo explícito → 1y (captura 12 meses)
+- News COM "90 dias" → 90d (breaking only)
+- Estudos de mercado → 3y (contexto) + 1y (tendências) [OBRIGATÓRIO]""",
 
     "planner_entity_rules": """
-**POLÃTICA ENTITY-CENTRIC (v4.8):**
+**POLÍTICA ENTITY-CENTRIC (v4.8):**
 
 | Quantidade | Mode | Seed_query | Must_terms (por fase) |
 |------------|------|------------|----------------------|
-| 1-3 | ðŸŽ¯ FOCADO | Incluir TODOS | **TODAS as fases** devem ter |
-| 4-6 | ðŸ“Š DISTRIBUÃDO | GenÃ©rica | industry:â‰¤3, profiles/news:TODAS |
-| 7+ | ðŸ“Š DISTRIBUÃDO | GenÃ©rica | industry:â‰¤3, profiles/news:TODAS |
+| 1-3 | 🎯 FOCADO | Incluir TODOS | **TODAS as fases** devem ter |
+| 4-6 | 📊 DISTRIBUÍDO | Genérica | industry:≤3, profiles/news:TODAS |
+| 7+ | 📊 DISTRIBUÍDO | Genérica | industry:≤3, profiles/news:TODAS |
 
-**Cobertura obrigatÃ³ria (1-3 entidades): â‰¥70% das fases devem incluir as entidades em must_terms**""",
+**Cobertura obrigatória (1-3 entidades): ≥70% das fases devem incluir as entidades em must_terms**""",
 
     # ===== ANALYST PROMPTS =====
-    "analyst_system": """âš ï¸ **FORMATO JSON OBRIGATÃ“RIO - REGRAS CRÃTICAS:**
+    "analyst_system": """⚠️ **FORMATO JSON OBRIGATÓRIO - REGRAS CRÍTICAS:**
 
-Retorne APENAS um objeto JSON vÃ¡lido. ProibiÃ§Ãµes absolutas:
-âŒ Markdown fences (```json ou ```)
-âŒ ComentÃ¡rios inline (// ou /* */)
-âŒ Texto explicativo antes/depois do JSON
-âŒ Aspas simples (use APENAS ")
-âŒ Quebras de linha dentro de strings
+Retorne APENAS um objeto JSON válido. Proibições absolutas:
+❌ Markdown fences (```json ou ```)
+❌ Comentários inline (// ou /* */)
+❌ Texto explicativo antes/depois do JSON
+❌ Aspas simples (use APENAS ")
+❌ Quebras de linha dentro de strings
 
 **ANTES DE RETORNAR, VALIDE MENTALMENTE:**
-1. âœ… ComeÃ§a com { e termina com } ?
-2. âœ… Todas as strings tÃªm aspas DUPLAS " ?
-3. âœ… VÃ­rgulas corretas (sem trailing commas) ?
-4. âœ… Nenhum comentÃ¡rio inline ?
-5. âœ… Nenhum markdown fence ?
+1. ✅ Começa com { e termina com } ?
+2. ✅ Todas as strings têm aspas DUPLAS " ?
+3. ✅ Vírgulas corretas (sem trailing commas) ?
+4. ✅ Nenhum comentário inline ?
+5. ✅ Nenhum markdown fence ?
 
-SE algum item falhar â†’ CORRIJA antes de retornar!
+SE algum item falhar → CORRIJA antes de retornar!
 
 **SCHEMA EXATO (copie a estrutura channel):**
 {
   "summary": "string resumo",
-  "facts": [{"texto": "...", "confianÃ§a": "alta|mÃ©dia|baixa", "evidencias": [{"url": "...", "trecho": "..."}]}],
+  "facts": [{"texto": "...", "confiança": "alta|média|baixa", "evidencias": [{"url": "...", "trecho": "..."}]}],
   "lacunas": ["..."],
-  "self_assessment": {"coverage_score": 0.7, "confidence": "mÃ©dia", "gaps_critical": true, "suggest_refine": false, "reasoning": "..."}
+  "self_assessment": {"coverage_score": 0.7, "confidence": "média", "gaps_critical": true, "suggest_refine": false, "reasoning": "..."}
 }
 
 ---
 
-VocÃª Ã© um ANALYST. Extraia 3-5 fatos importantes do contexto.
+Você é um ANALYST. Extraia 3-5 fatos importantes do contexto.
 
 **PRIORIDADE #1**: Responda DIRETAMENTE ao objetivo da fase
-- Priorize fatos sobre os Termos PrioritÃ¡rios mencionados
-- Ignore conteÃºdo relacionado aos termos em "Evitar"  
-- **CRÃTICO**: Ignore conteÃºdo que nÃ£o tem contexto setorial relevante
-- **CRÃTICO**: Se encontrar entidades com nomes similares mas em contextos diferentes (ex: "Flow" em outro setor), IGNORE se nÃ£o for relevante ao objetivo
-- Busque evidÃªncias concretas (URLs + trechos)
-- Valide se o contexto setorial das informaÃ§Ãµes encontradas corresponde ao objetivo da pesquisa""",
+- Priorize fatos sobre os Termos Prioritários mencionados
+- Ignore conteúdo relacionado aos termos em "Evitar"  
+- **CRÍTICO**: Ignore conteúdo que não tem contexto setorial relevante
+- **CRÍTICO**: Se encontrar entidades com nomes similares mas em contextos diferentes (ex: "Flow" em outro setor), IGNORE se não for relevante ao objetivo
+- Busque evidências concretas (URLs + trechos)
+- Valide se o contexto setorial das informações encontradas corresponde ao objetivo da pesquisa""",
 
     "analyst_calibration": """
-ðŸŽ¯ CALIBRAÃ‡ÃƒO DE coverage_score (PRAGMÃTICA):
+🎯 CALIBRAÇÃO DE coverage_score (PRAGMÁTICA):
 
 **0.0-0.3 (BAIXO - RESPOSTA INADEQUADA):**
-â†’ coverage_score = 0.2
-â†’ gaps_critical = True
-â†’ suggest_refine = True
+→ coverage_score = 0.2
+→ gaps_critical = True
+→ suggest_refine = True
 
-**0.4-0.6 (MÃ‰DIO - RESPOSTA PARCIAL mas ÃšTIL):**
-â†’ coverage_score = 0.6
-â†’ gaps_critical = False
-â†’ suggest_refine = False
+**0.4-0.6 (MÉDIO - RESPOSTA PARCIAL mas ÚTIL):**
+→ coverage_score = 0.6
+→ gaps_critical = False
+→ suggest_refine = False
 
-**0.7-0.9 (ALTO - RESPOSTA SÃ“LIDA):**
-â†’ coverage_score = 0.8
-â†’ gaps_critical = False
-â†’ suggest_refine = False""",
+**0.7-0.9 (ALTO - RESPOSTA SÓLIDA):**
+→ coverage_score = 0.8
+→ gaps_critical = False
+→ suggest_refine = False""",
 
     # ===== JUDGE PROMPTS =====
-    "judge_system": """VocÃª Ã© o JUDGE. Sua funÃ§Ã£o: ANALISAR e DECIDIR se a pesquisa estÃ¡ COMPLETA ou precisa de mais informaÃ§Ãµes.
+    "judge_system": """Você é o JUDGE. Sua função: ANALISAR e DECIDIR se a pesquisa está COMPLETA ou precisa de mais informações.
 
-ðŸ§  **ABORDAGEM LLM-FIRST:**
-- Analise QUALITATIVAMENTE a qualidade dos fatos extraÃ­dos
+🧠 **ABORDAGEM LLM-FIRST:**
+- Analise QUALITATIVAMENTE a qualidade dos fatos extraídos
 - Avalie se os fatos respondem adequadamente ao objetivo da pesquisa
-- Identifique lacunas crÃ­ticas que impedem uma resposta satisfatÃ³ria
-- Considere a diversidade de fontes e domÃ­nios encontrados
-- Proponha decisÃ£o baseada em JULGAMENTO, nÃ£o apenas mÃ©tricas numÃ©ricas""",
+- Identifique lacunas críticas que impedem uma resposta satisfatória
+- Considere a diversidade de fontes e domínios encontrados
+- Proponha decisão baseada em JULGAMENTO, não apenas métricas numéricas""",
 
     "judge_philosophy": """
-ðŸŽ¯ **FILOSOFIA DE DECISÃƒO INTELIGENTE:**
+🎯 **FILOSOFIA DE DECISÃO INTELIGENTE:**
 
-**DONE = Resposta SatisfatÃ³ria ao Objetivo**
-- Os fatos extraÃ­dos respondem adequadamente Ã  pergunta original?
-- HÃ¡ evidÃªncias concretas (nomes, nÃºmeros, datas, fontes especÃ­ficas)?
-- A diversidade de fontes Ã© adequada para o escopo?
-- As lacunas restantes sÃ£o secundÃ¡rias ou crÃ­ticas?
+**DONE = Resposta Satisfatória ao Objetivo**
+- Os fatos extraídos respondem adequadamente à pergunta original?
+- Há evidências concretas (nomes, números, datas, fontes específicas)?
+- A diversidade de fontes é adequada para o escopo?
+- As lacunas restantes são secundárias ou críticas?
 
-**REFINE = Busca Mais EspecÃ­fica NecessÃ¡ria**
-- Fatos genÃ©ricos demais, falta especificidade?
-- Lacunas crÃ­ticas impedem resposta ao objetivo?
+**REFINE = Busca Mais Específica Necessária**
+- Fatos genéricos demais, falta especificidade?
+- Lacunas críticas impedem resposta ao objetivo?
 - Fontes insuficientes ou repetitivas?
-- Necessidade de foco em entidades especÃ­ficas mencionadas?
+- Necessidade de foco em entidades específicas mencionadas?
 
 **NEW_PHASE = Abordagem Completamente Diferente**
-- MudanÃ§a significativa de escopo, temporalidade ou fonte?
-- Ã‚ngulo de pesquisa diferente que pode revelar informaÃ§Ãµes complementares?
-- Necessidade de abordar aspectos nÃ£o cobertos pela pesquisa atual?
+- Mudança significativa de escopo, temporalidade ou fonte?
+- Ângulo de pesquisa diferente que pode revelar informações complementares?
+- Necessidade de abordar aspectos não cobertos pela pesquisa atual?
 
-**PRINCÃPIO FUNDAMENTAL:** Priorize QUALIDADE sobre QUANTIDADE. Ã‰ melhor ter poucos fatos de alta qualidade que respondem ao objetivo do que muitos fatos genÃ©ricos.""",
+**PRINCÍPIO FUNDAMENTAL:** Priorize QUALIDADE sobre QUANTIDADE. É melhor ter poucos fatos de alta qualidade que respondem ao objetivo do que muitos fatos genéricos.""",
 }
 # ============================================================================
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
@@ -5708,11 +5688,11 @@ VocÃª Ã© um ANALYST. Extraia 3-5 fatos importantes do contexto.
 class PlannerLLM:
     def __init__(self, valves):
         self.valves = valves
-        # Usar modelo especÃ­fico se configurado, senÃ£o usa modelo padrÃ£o
+        # Usar modelo específico se configurado, senão usa modelo padrão
         model = valves.LLM_MODEL_PLANNER or valves.LLM_MODEL
         self.model_name = model
         self.llm = _get_llm(valves, model_name=model)
-        # Base kwargs: serÃ£o filtrados por get_safe_llm_params
+        # Base kwargs: serão filtrados por get_safe_llm_params
         self.generation_kwargs = {"temperature": 0}
 
     def _build_prompt(
@@ -5738,13 +5718,13 @@ class PlannerLLM:
             objective = phase.get("objective", "")[:150]
             seed_family = phase.get("seed_family_hint", "entity-centric")
 
-            # Templates por famÃ­lia (orientar LLM)
+            # Templates por família (orientar LLM)
             family_templates = {
                 "entity-centric": "entidade + tema + recorte geotemporal",
                 "problem-centric": "problema/risco + drivers/causas + contexto",
                 "outcome-centric": "efeito/resultado + indicadores + stakeholders",
-                "regulatory": "norma/regulador + exigÃªncias + abrangÃªncia",
-                "counterfactual": "tese/controvÃ©rsia + objeÃ§Ã£o + evidÃªncia-chave",
+                "regulatory": "norma/regulador + exigências + abrangência",
+                "counterfactual": "tese/controvérsia + objeção + evidência-chave",
             }
 
             template = family_templates.get(seed_family, "entidade + tema + contexto")
@@ -5755,13 +5735,13 @@ class PlannerLLM:
 OBJETIVO: {objective}
 ENTIDADES: {entities_str}
 GEO: {geo_str}
-FAMÃLIA: {seed_family} â†’ {template}
+FAMÍLIA: {seed_family} → {template}
 REGRAS:
 - SEM operadores (site:, filetype:, OR, AND, aspas)
 - Linguagem natural, clara
-- Incluir 1-2 entidades canÃ´nicas
+- Incluir 1-2 entidades canônicas
 - Incluir geo quando relevante
-SAÃDA (JSON puro):
+SAÍDA (JSON puro):
 {{"seed_core": "sua frase aqui"}}"""
 
             # Chamar LLM com timeout curto (20s)
@@ -5782,7 +5762,7 @@ SAÃDA (JSON puro):
                     content = result["replies"][0]
             
             if not content:
-                logger.warning("[Planner] LLM seed_core: resposta vazia ou formato invÃ¡lido")
+                logger.warning("[Planner] LLM seed_core: resposta vazia ou formato inválido")
                 return None
 
             content = content.strip()
@@ -5791,7 +5771,7 @@ SAÃDA (JSON puro):
             parsed = parse_json_resilient(content)
             if not parsed or not isinstance(parsed, dict):
                 logger.warning(
-                    f"[Planner] LLM seed_core: JSON invÃ¡lido - {content[:100]}"
+                    f"[Planner] LLM seed_core: JSON inválido - {content[:100]}"
                 )
                 return None
 
@@ -5800,7 +5780,7 @@ SAÃDA (JSON puro):
             # Validar
             if not seed_core or len(seed_core) < 12 or len(seed_core) > 200:
                 logger.warning(
-                    f"[Planner] LLM seed_core: tamanho invÃ¡lido ({len(seed_core)} chars)"
+                    f"[Planner] LLM seed_core: tamanho inválido ({len(seed_core)} chars)"
                 )
                 return None
 
@@ -5808,7 +5788,7 @@ SAÃDA (JSON puro):
             forbidden_ops = ["site:", "filetype:", "after:", "before:"]
             if any(op in seed_core for op in forbidden_ops):
                 logger.warning(
-                    f"[Planner] LLM seed_core contÃ©m operadores proibidos: {seed_core}"
+                    f"[Planner] LLM seed_core contém operadores proibidos: {seed_core}"
                 )
                 return None
 
@@ -5818,7 +5798,7 @@ SAÃDA (JSON puro):
             return seed_core
 
         except asyncio.TimeoutError:
-            logger.warning("[Planner] LLM seed_core: timeout apÃ³s 25s")
+            logger.warning("[Planner] LLM seed_core: timeout após 25s")
             return None
         except Exception as e:
             logger.warning(f"[Planner] LLM seed_core falhou: {e}")
@@ -5832,10 +5812,10 @@ SAÃDA (JSON puro):
         if not phases_list:
             raise ValueError("Nenhuma fase encontrada")
 
-        # Validar nÃºmero de fases (pode ser MENOS que o mÃ¡ximo, mas nÃ£o MAIS)
+        # Validar número de fases (pode ser MENOS que o máximo, mas não MAIS)
         if len(phases_list) > phases:
             raise ValueError(
-                f"Excesso de fases: {len(phases_list)} > {phases} (mÃ¡ximo permitido)"
+                f"Excesso de fases: {len(phases_list)} > {phases} (máximo permitido)"
             )
 
         # Defaults do perfil
@@ -5848,7 +5828,7 @@ SAÃDA (JSON puro):
         # Validar cada fase
         validated_phases = []
         for i, phase in enumerate(phases_list, 1):
-            # Validar campos obrigatÃ³rios (campos que NÃƒO tÃªm defaults)
+            # Validar campos obrigatórios (campos que NÃO têm defaults)
             required_fields = [
                 "name",
                 "objective",
@@ -5860,7 +5840,7 @@ SAÃDA (JSON puro):
 
             for field in required_fields:
                 if field not in phase:
-                    raise ValueError(f"Fase {i} falta campo obrigatÃ³rio: {field}")
+                    raise ValueError(f"Fase {i} falta campo obrigatório: {field}")
 
             # Validar seed_query (3-6 palavras, sem operadores)
             seed_query = phase["seed_query"].strip()
@@ -5874,7 +5854,7 @@ SAÃDA (JSON puro):
                     f"Fase {i}: seed_query (sem @noticias) deve ter 3-8 palavras, tem {len(clean_words)} palavras: {clean_words}"
                 )
 
-            # Validar proibiÃ§Ã£o de operadores
+            # Validar proibição de operadores
             forbidden_ops = [
                 "site:",
                 "filetype:",
@@ -5888,16 +5868,16 @@ SAÃDA (JSON puro):
             for op in forbidden_ops:
                 if op in seed_query:
                     raise ValueError(
-                        f"Fase {i}: seed_query nÃ£o pode conter operador '{op}'"
+                        f"Fase {i}: seed_query não pode conter operador '{op}'"
                     )
 
-            # Validar avoid_terms nÃ£o sobrepÃµe must_terms
+            # Validar avoid_terms não sobrepõe must_terms
             must_terms = phase["must_terms"]
             avoid_terms = phase.get("avoid_terms", [])  # Default to empty list if missing
             overlap = set(must_terms) & set(avoid_terms)
             if overlap:
                 raise ValueError(
-                    f"Fase {i}: must_terms e avoid_terms sobrepÃµem: {overlap}"
+                    f"Fase {i}: must_terms e avoid_terms sobrepõem: {overlap}"
                 )
 
             # Validar time_hint
@@ -6008,7 +5988,7 @@ SAÃDA (JSON puro):
         detected_context: Optional[dict] = None,
     ) -> Dict[str, Any]:
         if not self.llm:
-            raise ValueError("LLM nÃ£o configurado")
+            raise ValueError("LLM não configurado")
 
         phases = max(2, min(10, int(phases or 2)))
 
@@ -6020,10 +6000,10 @@ SAÃDA (JSON puro):
 PEDIDO DE REFINAMENTO/AJUSTE:
 {user_prompt}
 
-INSTRUÃ‡Ã•ES:
-- Se o pedido for um refinamento/ajuste do plano anterior (ex: "pesquise notÃ­cias de 2025", "adicione mais fases"), ATUALIZE o plano anterior
+INSTRUÇÕES:
+- Se o pedido for um refinamento/ajuste do plano anterior (ex: "pesquise notícias de 2025", "adicione mais fases"), ATUALIZE o plano anterior
 - Mantenha as fases existentes e ajuste apenas o que foi solicitado
-- Se for um pedido COMPLETAMENTE NOVO (sem relaÃ§Ã£o com o plano anterior), crie um novo plano
+- Se for um pedido COMPLETAMENTE NOVO (sem relação com o plano anterior), crie um novo plano
 - Responda com o plano completo (anterior ajustado OU novo)"""
             prompt = self._build_prompt(
                 contextual_prompt,
@@ -6041,7 +6021,7 @@ INSTRUÃ‡Ã•ES:
 
         for attempt in range(1, 3):
             try:
-                # Base params (serÃ£o filtrados para GPT-5/O1)
+                # Base params (serão filtrados para GPT-5/O1)
                 base_params = dict(self.generation_kwargs)
 
                 # JSON mode to reduce latency/noise
@@ -6060,7 +6040,7 @@ INSTRUÃ‡Ã•ES:
                 cap = int(getattr(self.valves, "HTTPX_READ_TIMEOUT", 180) or 180)
                 base_params["request_timeout"] = max(20, min(prt, cap))
 
-                # Filtrar parÃ¢metros incompatÃ­veis com GPT-5/O1
+                # Filtrar parâmetros incompatíveis com GPT-5/O1
                 gen_kwargs = get_safe_llm_params(self.model_name, base_params)
 
                 # Use retry function if enabled, otherwise single attempt
@@ -6100,7 +6080,7 @@ INSTRUÃ‡Ã•ES:
 
                 obj = _extract_json_from_text(out["replies"][0])
                 if not obj:
-                    raise ValueError("JSON invÃ¡lido")
+                    raise ValueError("JSON inválido")
 
                 contract = self._validate_contract(obj, phases, user_prompt)
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
@@ -6109,7 +6089,7 @@ INSTRUÃ‡Ã•ES:
                 return {"contract": contract, "contract_hash": _hash_contract(contract)}
 
             except (json.JSONDecodeError, ValueError, KeyError) as e:
-                # Erros de parse/validaÃ§Ã£o - tentar novamente
+                # Erros de parse/validação - tentar novamente
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     print(f"[Planner] Tentativa {attempt} - Parse error: {e}")
                 if attempt < 2:
@@ -6125,7 +6105,7 @@ INSTRUÃ‡Ã•ES:
                         f"Failed to generate valid contract after 3 attempts: {e}"
                     ) from e
             except ContractValidationError as e:
-                # Erro de validaÃ§Ã£o especÃ­fico - propagar
+                # Erro de validação específico - propagar
                 raise
             except Exception as e:
                 # Erro inesperado - tentar uma vez, depois propagar
@@ -6150,12 +6130,12 @@ INSTRUÃ‡Ã•ES:
 # 1. STATE DEFINITION (Completo - espelha Orchestrator)
 # ============================================================================
 class ResearchState(TypedDict, total=False):
-    """Estado compartilhado entre nÃ³s LangGraph - TODOS os campos do Orchestrator
+    """Estado compartilhado entre nós LangGraph - TODOS os campos do Orchestrator
 
-    ObservaÃ§Ã£o: Estrutura plena mantida por compatibilidade. Para tipagem e validaÃ§Ã£o
-    gradual, modelos Pydantic hierÃ¡rquicos sÃ£o introduzidos abaixo.
+    Observação: Estrutura plena mantida por compatibilidade. Para tipagem e validação
+    gradual, modelos Pydantic hierárquicos são introduzidos abaixo.
     """
-    # Campos originais mantidos (ver referÃªncia anterior)
+    # Campos originais mantidos (ver referência anterior)
     correlation_id: str
     query: str
     original_query: str
@@ -6228,7 +6208,7 @@ class RSEvidenceModel(BaseModel):
 
 class RSFactModel(BaseModel):
     texto: str
-    confianÃ§a: Literal["alta", "mÃ©dia", "baixa"]
+    confiança: Literal["alta", "média", "baixa"]
     evidencias: Optional[List[RSEvidenceModel]] = []
 
 
@@ -6249,9 +6229,9 @@ class ResearchStateModel(BaseModel):
     results: RSResultsModel
     telemetry: RSTelemetryModel
 # ============================================================================
-# 2. HELPER CLASSES (COMPLETAS - jÃ¡ migradas acima)
+# 2. HELPER CLASSES (COMPLETAS - já migradas acima)
 # ============================================================================
-# Todas as classes helper jÃ¡ foram migradas completamente:
+# Todas as classes helper já foram migradas completamente:
 # - Deduplicator (linhas 909+)
 # - AsyncOpenAIClient (linhas 1526+)  
 # - AnalystLLM (linhas 1675+)
@@ -6259,10 +6239,10 @@ class ResearchStateModel(BaseModel):
 # - PlannerLLM (linhas 3129+)
 # - PROMPTS dictionary (linhas 2800+)
 # ============================================================================
-# 3. GRAPH NODES (ImplementaÃ§Ãµes completas)
+# 3. GRAPH NODES (Implementações completas)
 # ============================================================================
 # ============================================================================
-# 3. NODE WRAPPERS (Chamam cÃ³digo existente)
+# 3. NODE WRAPPERS (Chamam código existente)
 # ============================================================================
 
 # ============================================================================
@@ -6342,17 +6322,17 @@ def should_continue_research(state: ResearchState) -> str:
 
 def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reducer_tool=None):
     """
-    Grafo multi-agente com roteamento dinÃ¢mico
+    Grafo multi-agente com roteamento dinâmico
     
     Fluxo:
-    START â†’ coordinator â†’ [planner|researcher]
-         â†“                      â†“
-    researcher â†’ analyst â†’ judge â†’ [continue|done|human_feedback]
-         â†‘                              â†“
-         â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€reporter â†’ END
+    START → coordinator → [planner|researcher]
+         ↓                      ↓
+    researcher → analyst → judge → [continue|done|human_feedback]
+         ↑                              ↓
+         └────────────────────────────reporter → END
     """
     if not LANGGRAPH_AVAILABLE:
-        logger.warning("[LangGraph] LangGraph nÃ£o estÃ¡ disponÃ­vel. Instale: pip install langgraph")
+        logger.warning("[LangGraph] LangGraph não está disponível. Instale: pip install langgraph")
         return None
     
     builder = StateGraph(ResearchState)
@@ -6370,12 +6350,12 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     from langgraph.graph import START
     builder.add_edge(START, "coordinator")
     
-    # ===== ROTEAMENTO DINÃ‚MICO DO COORDINATOR =====
+    # ===== ROTEAMENTO DINÂMICO DO COORDINATOR =====
     builder.add_conditional_edges(
         "coordinator",
         lambda state: state.get("goto", "researcher"),
         {
-            "coordinator": "coordinator",      # Loop para clarificaÃ§Ã£o
+            "coordinator": "coordinator",      # Loop para clarificação
             "planner": "planner",
             "researcher": "researcher",
             END: END
@@ -6391,7 +6371,7 @@ def build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reduce
     # ===== FLUXO DO ANALYST =====
     builder.add_edge("analyst", "judge")
     
-    # ===== ROTEAMENTO DINÃ‚MICO DO JUDGE =====
+    # ===== ROTEAMENTO DINÂMICO DO JUDGE =====
     builder.add_conditional_edges(
         "judge",
         lambda state: state.get("goto", "reporter"),
@@ -6419,7 +6399,7 @@ def build_research_graph(valves, discovery_tool, scraper_tool, context_reducer_t
     logger.warning("[DEPRECATED] build_research_graph() is deprecated. Use build_multi_agent_graph() instead.")
     return build_multi_agent_graph(valves, discovery_tool, scraper_tool, context_reducer_tool)
 class GraphNodes:
-    """Wrappers FINOS - delegam para cÃ³digo existente (ex-Orchestrator)"""
+    """Wrappers FINOS - delegam para código existente (ex-Orchestrator)"""
     
     def __init__(self, valves, discovery_tool, scraper_tool, context_reducer_tool=None):
         self.valves = valves
@@ -6863,7 +6843,7 @@ class GraphNodes:
             )
             
             if getattr(self.valves, "VERBOSE_DEBUG", False):
-                print(f"[Context Reducer] coarse: {len(raw_content)} â†’ {len(filtered_content)} chars (-{reduction:.1f}%)")
+                print(f"[Context Reducer] coarse: {len(raw_content)} → {len(filtered_content)} chars (-{reduction:.1f}%)")
             
             # ===== TELEMETRY FINAL =====
             if tel is not None:
@@ -6945,22 +6925,22 @@ class GraphNodes:
             if getattr(self.valves, "VERBOSE_DEBUG", False):
                 print(f"[Accumulator] Total acumulado: {len(accumulated_context)} chars")
         
-        # DeduplicaÃ§Ã£o opcional para Analyst
+        # Deduplicação opcional para Analyst
         analyst_context = accumulated_context
         
         if getattr(self.valves, 'ENABLE_ANALYST_DEDUPLICATION', False) and accumulated_context:
-            # DivisÃ£o mais agressiva para garantir ativaÃ§Ã£o da deduplicaÃ§Ã£o
+            # Divisão mais agressiva para garantir ativação da deduplicação
             paragraphs = [
                 p.strip() for p in accumulated_context.split("\n\n") if p.strip()
             ]
             
-            # Se ainda nÃ£o tem parÃ¡grafos suficientes, dividir por sentenÃ§as
+            # Se ainda não tem parágrafos suficientes, dividir por sentenças
             if len(paragraphs) < getattr(self.valves, 'MAX_ANALYST_PARAGRAPHS', 50):
-                # Dividir por sentenÃ§as (pontos seguidos de espaÃ§o)
+                # Dividir por sentenças (pontos seguidos de espaço)
                 sentences = [
                     s.strip() for s in accumulated_context.replace('\n', ' ').split('. ') if s.strip()
                 ]
-                # Agrupar sentenÃ§as em parÃ¡grafos de ~3 sentenÃ§as
+                # Agrupar sentenças em parágrafos de ~3 sentenças
                 paragraphs = []
                 for i in range(0, len(sentences), 3):
                     paragraph = '. '.join(sentences[i:i+3])
@@ -6971,9 +6951,9 @@ class GraphNodes:
             max_paragraphs = getattr(self.valves, 'MAX_ANALYST_PARAGRAPHS', 50)
             if len(paragraphs) > max_paragraphs:
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
-                    print(f"[DEDUP ANALYST] âœ… ATIVADO: {len(paragraphs)} parÃ¡grafos > {max_paragraphs} â†’ deduplicando para Analyst...")
+                    print(f"[DEDUP ANALYST] ✅ ATIVADO: {len(paragraphs)} parágrafos > {max_paragraphs} → deduplicando para Analyst...")
                 
-                # Calcular preservaÃ§Ã£o de contexto recente
+                # Calcular preservação de contexto recente
                 if filtered_content:
                     new_paragraphs = [
                         p.strip() for p in filtered_content.split("\n\n") if p.strip()
@@ -6987,18 +6967,18 @@ class GraphNodes:
                     )
                     
                     if getattr(self.valves, "VERBOSE_DEBUG", False):
-                        print(f"[DEDUP ANALYST] ðŸ”’ Preservation: {preserve_recent_pct:.1%} ({new_count} new / {len(paragraphs)} total)")
+                        print(f"[DEDUP ANALYST] 🔒 Preservation: {preserve_recent_pct:.1%} ({new_count} new / {len(paragraphs)} total)")
                 else:
                     # No new content - use lower preservation for old accumulated data
                     preserve_recent_pct = 0.2
                     if getattr(self.valves, "VERBOSE_DEBUG", False):
-                        print(f"[DEDUP ANALYST] âš ï¸ No new content - preserving {preserve_recent_pct:.1%} of accumulated")
+                        print(f"[DEDUP ANALYST] ⚠️ No new content - preserving {preserve_recent_pct:.1%} of accumulated")
                 
-                # Usar estratÃ©gia especÃ­fica do Analyst
+                # Usar estratégia específica do Analyst
                 algorithm = getattr(self.valves, "ANALYST_DEDUP_ALGORITHM", "semantic")
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
-                    print(f"[DEDUP ANALYST] ðŸ§  Algoritmo: {algorithm.upper()}")
-                    print(f"[DEDUP ANALYST] ðŸ“Š Input: {len(paragraphs)} parÃ¡grafos â†’ Target: {max_paragraphs}")
+                    print(f"[DEDUP ANALYST] 🧠 Algoritmo: {algorithm.upper()}")
+                    print(f"[DEDUP ANALYST] 📊 Input: {len(paragraphs)} parágrafos → Target: {max_paragraphs}")
                 
                 # Deduplicar com context-aware
                 dedupe_result = self.deduplicator.dedupe(
@@ -7018,7 +6998,7 @@ class GraphNodes:
                 
                 deduped_paragraphs = dedupe_result["chunks"]
                 
-                # âœ… [FIX 3] Combinar pequenos parÃ¡grafos (inline to avoid undefined helper)
+                # ✅ [FIX 3] Combinar pequenos parágrafos (inline to avoid undefined helper)
                 def _merge_small_paragraphs_inline(paragraphs: list, min_chars: int = 100) -> list:
                     merged: list[str] = []
                     buf = ""
@@ -7043,17 +7023,17 @@ class GraphNodes:
                 deduped_paragraphs = _merge_small_paragraphs_inline(deduped_paragraphs, min_chars=100)
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
-                    print(f"[FIX 3] Merge pÃ³s-dedup: {dedupe_result['deduped_count']} â†’ {len(deduped_paragraphs)} parÃ¡grafos")
+                    print(f"[FIX 3] Merge pós-dedup: {dedupe_result['deduped_count']} → {len(deduped_paragraphs)} parágrafos")
                 
                 deduped_context = "\n\n".join(deduped_paragraphs)
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
-                    print(f"[DEDUP ANALYST] {dedupe_result['original_count']} â†’ {dedupe_result['deduped_count']} parÃ¡grafos ({dedupe_result['reduction_pct']:.1f}% reduÃ§Ã£o)")
+                    print(f"[DEDUP ANALYST] {dedupe_result['original_count']} → {dedupe_result['deduped_count']} parágrafos ({dedupe_result['reduction_pct']:.1f}% redução)")
                     
                     # Additional telemetry
                     preserved_count = int(len(paragraphs) * preserve_recent_pct)
-                    print(f"[DEDUP ANALYST] ðŸ“Œ Recent preservation: {preserved_count} paragraphs ({preserve_recent_pct:.1%}) protected from deduplication")
-                    print(f"[DEDUP ANALYST] ðŸŽ¯ Valve setting: ANALYST_PRESERVE_RECENT_PCT = {getattr(self.valves, 'ANALYST_PRESERVE_RECENT_PCT', 1.0)}")
+                    print(f"[DEDUP ANALYST] 📌 Recent preservation: {preserved_count} paragraphs ({preserve_recent_pct:.1%}) protected from deduplication")
+                    print(f"[DEDUP ANALYST] 🎯 Valve setting: ANALYST_PRESERVE_RECENT_PCT = {getattr(self.valves, 'ANALYST_PRESERVE_RECENT_PCT', 1.0)}")
         
         # Chamar Analyst
         analysis = await self.analyst.run(
@@ -7070,7 +7050,7 @@ class GraphNodes:
                 sum_preview = (analysis.get('summary', '') or '')[:200]
             await _safe_emit(em, f"[ANALYST][{correlation_id}] facts={facts_ct} lacunas={lac_ct}")
             if sum_preview:
-                await _safe_emit(em, f"Resumo: {sum_preview}â€¦")
+                await _safe_emit(em, f"Resumo: {sum_preview}…")
         except Exception:
             pass
         
@@ -7080,10 +7060,10 @@ class GraphNodes:
             analysis = {
                 "summary": "",
                 "facts": [],
-                "lacunas": ["Erro: Analyst retornou tipo invÃ¡lido"],
+                "lacunas": ["Erro: Analyst retornou tipo inválido"],
             }
         
-        # Garantir campos mÃ­nimos
+        # Garantir campos mínimos
         if not analysis.get("facts"):
             analysis["facts"] = []
         if not analysis.get("lacunas"):
@@ -7201,15 +7181,15 @@ class GraphNodes:
 
 class Pipe:
     """
-    Pipe compatÃ­vel com OpenWebUI - delega ao LangGraph
+    Pipe compatível com OpenWebUI - delega ao LangGraph
     
     Responsabilidades:
-    1. Gerenciar ciclo de FASES (nÃ£o loops internos)
+    1. Gerenciar ciclo de FASES (não loops internos)
     2. Criar novas fases (quando Judge retorna NEW_PHASE)
-    3. Chamar sÃ­ntese final
+    3. Chamar síntese final
     4. Manter fallback para modo manual
     
-    TODO: Copiar Valves e mÃ©todos auxiliares do PipeManual (linhas ~5000-6000)
+    TODO: Copiar Valves e métodos auxiliares do PipeManual (linhas ~5000-6000)
     """
     
     class Valves(BaseModel):
@@ -7224,29 +7204,29 @@ class Pipe:
         DEBUG_LOGGING: bool = Field(default=False, description="Logs detalhados")
         ENABLE_LINE_BUDGET_GUARD: bool = Field(
             default=False,
-            description="Ativar Line-Budget Guard na inicializaÃ§Ã£o (alerta sobre funÃ§Ãµes muito grandes)",
+            description="Ativar Line-Budget Guard na inicialização (alerta sobre funções muito grandes)",
         )
 
-        # OrquestraÃ§Ã£o
+        # Orquestração
         USE_PLANNER: bool = Field(default=True, description="Usar planner")
-        USE_LANGGRAPH: bool = Field(default=True, description="Usar LangGraph workflow com Guard Nodes (padrÃ£o ativo)")
+        USE_LANGGRAPH: bool = Field(default=True, description="Usar LangGraph workflow com Guard Nodes (padrão ativo)")
         MAX_AGENT_LOOPS: int = Field(
             default=3,
             ge=1,
             le=10,
-            description="Max loops/fase (aumentado de 2â†’3 para evitar new_phases forÃ§adas prematuramente)",
+            description="Max loops/fase (aumentado de 2→3 para evitar new_phases forçadas prematuramente)",
         )
         DEFAULT_PHASE_COUNT: int = Field(
             default=6,
             ge=2,
             le=10,
-            description="MÃ¡ximo de fases iniciais (Planner cria ATÃ‰ este nÃºmero). Ajuste conforme necessÃ¡rio: 2-3 para pesquisas focadas, 4-6 para anÃ¡lises complexas, 7-10 para estudos abrangentes.",
+            description="Máximo de fases iniciais (Planner cria ATÉ este número). Ajuste conforme necessário: 2-3 para pesquisas focadas, 4-6 para análises complexas, 7-10 para estudos abrangentes.",
         )
         MAX_PHASES: int = Field(
             default=6,
             ge=3,
             le=15,
-            description="MÃ¡ximo TOTAL de fases (iniciais + criadas pelo Judge)",
+            description="Máximo TOTAL de fases (iniciais + criadas pelo Judge)",
         )
         VERBOSE_DEBUG: bool = Field(
             default=False, description="Habilitar logs detalhados de debug"
@@ -7257,7 +7237,7 @@ class Pipe:
             default=60,
             ge=30,
             le=300,
-            description="Timeout padrÃ£o para chamadas LLM (Planner, Judge)",
+            description="Timeout padrão para chamadas LLM (Planner, Judge)",
         )
         LLM_TIMEOUT_ANALYST: int = Field(
             default=90,
@@ -7266,24 +7246,24 @@ class Pipe:
             description="Timeout para Analyst (processa mais contexto)",
         )
 
-        # âœ… NOVO: Timeout dedicado para sÃ­ntese sem cap
+        # ✅ NOVO: Timeout dedicado para síntese sem cap
         LLM_TIMEOUT_SYNTHESIS: int = Field(
-            default=600,  # â¬†ï¸ Aumentado: 300â†’600s (10 minutos)
+            default=600,  # ⬆️ Aumentado: 300→600s (10 minutos)
             ge=60,
-            le=1800,  # â¬†ï¸ MÃ¡ximo: 900â†’1800s (30 minutos para casos extremos)
-            description="Timeout para SÃ­ntese Final (processa muito contexto) - Default 600s (10min), Max 1800s (30min). IMPORTANTE: Se aumentar, garanta que HTTPX_READ_TIMEOUT tambÃ©m suba ou serÃ¡ ignorado.",
+            le=1800,  # ⬆️ Máximo: 900→1800s (30 minutos para casos extremos)
+            description="Timeout para Síntese Final (processa muito contexto) - Default 600s (10min), Max 1800s (30min). IMPORTANTE: Se aumentar, garanta que HTTPX_READ_TIMEOUT também suba ou será ignorado.",
         )
 
         # Planner/API behavior
         FORCE_JSON_MODE: bool = Field(
             default=True,
-            description="ForÃ§ar response_format=json (quando suportado) para reduzir latÃªncia e ruÃ­do",
+            description="Forçar response_format=json (quando suportado) para reduzir latência e ruído",
         )
         PLANNER_REQUEST_TIMEOUT: int = Field(
             default=180,
             ge=20,
             le=600,
-            description="Timeout de leitura HTTP do Planner em segundos (falha rÃ¡pida) â€“ default elevado para 180s",
+            description="Timeout de leitura HTTP do Planner em segundos (falha rápida) – default elevado para 180s",
         )
         ENABLE_LLM_RETRY: bool = Field(
             default=True,
@@ -7293,13 +7273,13 @@ class Pipe:
             default=3,
             ge=1,
             le=5,
-            description="MÃ¡ximo de tentativas com backoff exponencial",
+            description="Máximo de tentativas com backoff exponencial",
         )
         HTTPX_READ_TIMEOUT: int = Field(
             default=180,
             ge=60,
-            le=600,  # â¬†ï¸ Aumentado: 300â†’600s
-            description="Timeout de leitura HTTP base (httpx client). Para sÃ­ntese final, usar LLM_TIMEOUT_SYNTHESIS.",
+            le=600,  # ⬆️ Aumentado: 300→600s
+            description="Timeout de leitura HTTP base (httpx client). Para síntese final, usar LLM_TIMEOUT_SYNTHESIS.",
         )
         
         @validator("LLM_TIMEOUT_SYNTHESIS")
@@ -7318,31 +7298,31 @@ class Pipe:
             default=180,
             ge=60,
             le=600,
-            description="Timeout externo especÃ­fico do Planner (prompts maiores)",
+            description="Timeout externo específico do Planner (prompts maiores)",
         )
 
         # Synthesis Control
         ENABLE_DEDUPLICATION: bool = Field(
-            default=True, description="Habilitar deduplicaÃ§Ã£o na sÃ­ntese final"
+            default=True, description="Habilitar deduplicação na síntese final"
         )
         PRESERVE_PARAGRAPH_ORDER: bool = Field(
             default=True,
-            description="Shuffle para seleÃ§Ã£o justa + reordenar para preservar narrativa (True=recomendado); False=ordenar por tamanho",
+            description="Shuffle para seleção justa + reordenar para preservar narrativa (True=recomendado); False=ordenar por tamanho",
         )
         MAX_CONTEXT_CHARS: int = Field(
             default=150000,
-            description="MÃ¡ximo de caracteres no contexto para LLM (reduzido para melhor qualidade)",
+            description="Máximo de caracteres no contexto para LLM (reduzido para melhor qualidade)",
         )
 
         # Deduplication Parameters - CALIBRADO PARA QUALIDADE (v4.4)
         MAX_DEDUP_PARAGRAPHS: int = Field(
-            default=200,  # â¬‡ï¸ Reduzido: 300â†’200 parÃ¡grafos (~24k chars, ~6k tokens)
+            default=200,  # ⬇️ Reduzido: 300→200 parágrafos (~24k chars, ~6k tokens)
             ge=50,
             le=1000,
-            description="MÃ¡ximo de parÃ¡grafos apÃ³s deduplicaÃ§Ã£o - Default 200 (~24k chars). ATENÃ‡ÃƒO: >300 pode causar prompt >12k tokens levando a timeout (300s+) ou sÃ­ntese genÃ©rica!",
+            description="Máximo de parágrafos após deduplicação - Default 200 (~24k chars). ATENÇÃO: >300 pode causar prompt >12k tokens levando a timeout (300s+) ou síntese genérica!",
         )
         DEDUP_SIMILARITY_THRESHOLD: float = Field(
-            default=0.80,  # â¬‡ï¸ Reduzido: 0.85â†’0.80 (mais agressivo, -20% duplicatas)
+            default=0.80,  # ⬇️ Reduzido: 0.85→0.80 (mais agressivo, -20% duplicatas)
             ge=0.0,
             le=1.0,
             description="Threshold de similaridade (0.0-1.0, mais baixo = mais agressivo)",
@@ -7351,11 +7331,11 @@ class Pipe:
             default=0.7,
             ge=0.0,
             le=1.0,
-            description="Peso da relevÃ¢ncia vs diversidade (0.0-1.0, mais alto = mais conservador)",
+            description="Peso da relevância vs diversidade (0.0-1.0, mais alto = mais conservador)",
         )
         DEDUP_ALGORITHM: str = Field(
             default="mmr",
-            description="Algoritmo de deduplicaÃ§Ã£o: 'mmr' (padrÃ£o) | 'minhash' (rÃ¡pido) | 'tfidf' (semÃ¢ntico) | 'semantic' (Haystack embeddings)",
+            description="Algoritmo de deduplicação: 'mmr' (padrão) | 'minhash' (rápido) | 'tfidf' (semântico) | 'semantic' (Haystack embeddings)",
         )
 
         CONTEXT_AWARE_PRIORITY_THRESHOLD: float = Field(
@@ -7367,7 +7347,7 @@ class Pipe:
 
         SEMANTIC_MODEL: str = Field(
             default="sentence-transformers/all-MiniLM-L6-v2",
-            description="Modelo de embeddings para deduplicaÃ§Ã£o semÃ¢ntica (lightweight por padrÃ£o)"
+            description="Modelo de embeddings para deduplicação semântica (lightweight por padrão)"
         )
 
         # Analyst Dedup Strategy
@@ -7395,7 +7375,7 @@ class Pipe:
         )
         SYNTHESIS_DEDUP_MODEL: str = Field(
             default="sentence-transformers/paraphrase-MiniLM-L3-v2",
-            description="Modelo embeddings para Synthesis (se semantic, mais rÃ¡pido)"
+            description="Modelo embeddings para Synthesis (se semantic, mais rápido)"
         )
 
         # Context-Aware
@@ -7404,20 +7384,20 @@ class Pipe:
             description="Ativar dedup context-aware (preserva must_terms/key_questions)"
         )
         CONTEXT_AWARE_PRESERVE_PCT: float = Field(
-            default=0.12,  # P0: Reduzido temporariamente para evitar preservaÃ§Ã£o excessiva
+            default=0.12,  # P0: Reduzido temporariamente para evitar preservação excessiva
             description="% de chunks high-priority a preservar (0.0-1.0)"
         )
 
         # Deduplication for Analyst (per-iteration)
         ENABLE_ANALYST_DEDUPLICATION: bool = Field(
             default=False,
-            description="Dedupe contexto ANTES de enviar ao Analyst (reduz tokens, mantÃ©m contexto completo para prÃ³ximas iteraÃ§Ãµes)",
+            description="Dedupe contexto ANTES de enviar ao Analyst (reduz tokens, mantém contexto completo para próximas iterações)",
         )
         MAX_ANALYST_PARAGRAPHS: int = Field(
             default=200,
             ge=50,
             le=500,
-            description="MÃ¡ximo de parÃ¡grafos para Analyst (~24k chars, ~6k tokens) - Analyst processa menos que SÃ­ntese",
+            description="Máximo de parágrafos para Analyst (~24k chars, ~6k tokens) - Analyst processa menos que Síntese",
         )
         ANALYST_PRESERVE_RECENT_PCT: float = Field(
             default=1.0,  # 100% by default - preserve ALL new content
@@ -7432,7 +7412,7 @@ class Pipe:
                 "default": ["gov.br", ".gov", "bcb.gov.br", "cvm.gov.br"],
                 "regulation_review": ["planalto.gov.br", "camara.leg.br", "senado.leg.br"],
             },
-            description="Lista de domÃ­nios oficiais por perfil",
+            description="Lista de domínios oficiais por perfil",
         )
 
         # Diversity caps by profile (for context selection)
@@ -7441,17 +7421,17 @@ class Pipe:
                 "default": {"min_new_domains": 2, "min_official": 1, "min_independent": 2},
                 "conservative": {"min_new_domains": 1, "min_official": 2, "min_independent": 1},
             },
-            description="MÃ­nimos por bucket para seleÃ§Ã£o de contexto, por perfil",
+            description="Mínimos por bucket para seleção de contexto, por perfil",
         )
 
         # Continue detection configuration
         CONTINUE_TERMS_OVERRIDE: Optional[List[str]] = Field(
             default=None,
-            description="Substitui termos padrÃ£o de detecÃ§Ã£o de 'siga' (se None, usa defaults)",
+            description="Substitui termos padrão de detecção de 'siga' (se None, usa defaults)",
         )
         STRICT_CONTINUE_ACTIVATION: bool = Field(
             default=True,
-            description="Ativar gate estrito para execuÃ§Ã£o mesmo quando detecÃ§Ã£o ampla for positiva",
+            description="Ativar gate estrito para execução mesmo quando detecção ampla for positiva",
         )
 
         # Judge Duplicate Detection
@@ -7464,7 +7444,7 @@ class Pipe:
 
         # Quality Rails Parameters
         MIN_UNIQUE_DOMAINS: int = Field(
-            default=2, description="MÃ­nimo de domÃ­nios Ãºnicos por fase"
+            default=2, description="Mínimo de domínios únicos por fase"
         )
         REQUIRE_OFFICIAL_OR_TWO_INDEPENDENT: bool = Field(
             default=True, description="Exigir fonte oficial ou duas independentes"
@@ -7475,7 +7455,7 @@ class Pipe:
             default=0.70,
             ge=0.0,
             le=1.0,
-            description="Cobertura mÃ­nima de entidades nas fases (0.70 = 70% das fases devem conter entidades)",
+            description="Cobertura mínima de entidades nas fases (0.70 = 70% das fases devem conter entidades)",
         )
         MIN_ENTITY_COVERAGE_STRICT: bool = Field(
             default=True,
@@ -7485,13 +7465,13 @@ class Pipe:
         # --- FASE 1: Seeds ---
         SEED_VALIDATION_STRICT: bool = Field(
             default=False,
-            description="False = tenta patch leve em seeds magras; True = sÃ³ valida (sem patch)",
+            description="False = tenta patch leve em seeds magras; True = só valida (sem patch)",
         )
 
         # --- FASE 1: News slot ---
         ENFORCE_NEWS_SLOT: bool = Field(
             default=True,
-            description="Manter a polÃ­tica existente de news slot; adicionamos telemetria",
+            description="Manter a política existente de news slot; adicionamos telemetria",
         )
 
         # --- FASE 2: Planner economy controls ---
@@ -7521,7 +7501,7 @@ class Pipe:
         )
         OPENAI_API_KEY: str = Field(default="", description="API Key")
         LLM_MODEL: str = Field(
-            default="gpt-4o", description="Modelo padrÃ£o para todos os componentes"
+            default="gpt-4o", description="Modelo padrão para todos os componentes"
         )
         LLM_TEMPERATURE: float = Field(
             default=0.2, ge=0.0, le=1.0, description="Temperature"
@@ -7530,10 +7510,10 @@ class Pipe:
             default=2048,
             ge=100,
             le=4000,
-            description="âš ï¸ DEPRECATED: NÃ£o usado pelo Pipe (incompatÃ­vel GPT-5/O1). Mantido para compatibilidade.",
+            description="⚠️ DEPRECATED: Não usado pelo Pipe (incompatível GPT-5/O1). Mantido para compatibilidade.",
         )
 
-        # Modelos especÃ­ficos por componente (opcional - deixe vazio para usar LLM_MODEL)
+        # Modelos específicos por componente (opcional - deixe vazio para usar LLM_MODEL)
         LLM_MODEL_PLANNER: str = Field(
             default="", description="Modelo para Planner (vazio = usa LLM_MODEL)"
         )
@@ -7545,7 +7525,7 @@ class Pipe:
         )
         LLM_MODEL_SYNTHESIS: str = Field(
             default="",
-            description="Modelo para SÃ­ntese Final (vazio = usa LLM_MODEL) - Use modelo mais capaz aqui!",
+            description="Modelo para Síntese Final (vazio = usa LLM_MODEL) - Use modelo mais capaz aqui!",
         )
 
         # Context Reducer
@@ -7556,15 +7536,15 @@ class Pipe:
             default="light", description="Modo: coarse|light|ultra"
         )
 
-        # âœ… NOVO: Controle de exportaÃ§Ã£o PDF
+        # ✅ NOVO: Controle de exportação PDF
         AUTO_EXPORT_PDF: bool = Field(
             default=False,
-            description="Exportar automaticamente relatÃ³rio para PDF ao final da sÃ­ntese",
+            description="Exportar automaticamente relatório para PDF ao final da síntese",
         )
 
         EXPORT_FULL_CONTEXT: bool = Field(
             default=True,
-            description="Se True, exporta contexto bruto completo; se False, apenas relatÃ³rio final",
+            description="Se True, exporta contexto bruto completo; se False, apenas relatório final",
         )
         # Gates por perfil (P1) - EXPANDIDO v4.7: phase_score thresholds + two_flat_loops
         GATES_BY_PROFILE: Dict[str, Dict[str, Any]] = Field(
@@ -7650,32 +7630,32 @@ class Pipe:
             },
             description="Gates de novidade/staleness por perfil + phase_score thresholds (v4.7)",
         )
-        # âœ… NOVO v4.7: Phase Score Weights (auditÃ¡vel, configurÃ¡vel)
+        # ✅ NOVO v4.7: Phase Score Weights (auditável, configurável)
         PHASE_SCORE_WEIGHTS: Dict[str, float] = Field(
             default={
                 "w_cov": 0.35,  # Peso: coverage (key_questions respondidas)
                 "w_nf": 0.25,  # Peso: novel_fact_ratio (fatos novos)
-                "w_nd": 0.15,  # Peso: novel_domain_ratio (domÃ­nios novos)
-                "w_div": 0.15,  # Peso: domain_diversity (distribuiÃ§Ã£o uniforme)
-                "w_contra": 0.40,  # Penalidade: contradiction_score (contradiÃ§Ãµes)
+                "w_nd": 0.15,  # Peso: novel_domain_ratio (domínios novos)
+                "w_div": 0.15,  # Peso: domain_diversity (distribuição uniforme)
+                "w_contra": 0.40,  # Penalidade: contradiction_score (contradições)
             },
-            description="Pesos para cÃ¡lculo de phase_score (v4.7) - Score = w_cov*coverage + w_nf*novel_facts + w_nd*novel_domains + w_div*diversity - w_contra*contradictions",
+            description="Pesos para cálculo de phase_score (v4.7) - Score = w_cov*coverage + w_nf*novel_facts + w_nd*novel_domains + w_div*diversity - w_contra*contradictions",
         )
 
-        # âœ… NOVO v4.7: Coverage target global (usado em decisÃ£o DONE)
+        # ✅ NOVO v4.7: Coverage target global (usado em decisão DONE)
         COVERAGE_TARGET: float = Field(
             default=0.70,
             ge=0.0,
             le=1.0,
-            description="Target mÃ­nimo de coverage para considerar DONE (0.0-1.0, default 0.70 = 70%)",
+            description="Target mínimo de coverage para considerar DONE (0.0-1.0, default 0.70 = 70%)",
         )
 
-        # âœ… NOVO v4.7: Contradiction hard gate (forÃ§a NEW_PHASE imediato)
+        # ✅ NOVO v4.7: Contradiction hard gate (força NEW_PHASE imediato)
         CONTRADICTION_HARD_GATE: float = Field(
             default=0.75,
             ge=0.0,
             le=1.0,
-            description="Threshold de contradiction_score para forÃ§ar NEW_PHASE imediato (0.0-1.0, default 0.75)",
+            description="Threshold de contradiction_score para forçar NEW_PHASE imediato (0.0-1.0, default 0.75)",
         )
     
     def __init__(self):
@@ -7693,7 +7673,7 @@ class Pipe:
         logger.info("[PIPE] Pipe inicializado")
 
     async def health_check(self) -> Dict[str, Any]:
-        """Health check bÃ¡sico do pipeline."""
+        """Health check básico do pipeline."""
         checks: Dict[str, Any] = {}
         status = "healthy"
         # LLM ping
@@ -7772,16 +7752,16 @@ class Pipe:
         
         # ===== LANGGRAPH FALLBACK DIAGNOSIS =====
         if not LANGGRAPH_AVAILABLE and getattr(self.valves, 'USE_LANGGRAPH', False):
-            yield f"**[ERRO]** LangGraph solicitado mas nÃ£o disponÃ­vel\n"
+            yield f"**[ERRO]** LangGraph solicitado mas não disponível\n"
             
-            # DiagnÃ³stico automÃ¡tico
+            # Diagnóstico automático
             try:
                 import langgraph
                 version = getattr(langgraph, '__version__', 'unknown')
-                yield f"- âœ… langgraph instalado: versÃ£o {version}\n"
-                yield f"- âš ï¸ Mas import falhou. Verifique dependÃªncias.\n"
+                yield f"- ✅ langgraph instalado: versão {version}\n"
+                yield f"- ⚠️ Mas import falhou. Verifique dependências.\n"
             except ImportError as e:
-                yield f"- âŒ langgraph nÃ£o instalado ou import falhou: {e}\n"
+                yield f"- ❌ langgraph não instalado ou import falhou: {e}\n"
                 yield f"\n**[FIX]** Execute: `pip install langgraph>=0.3.5 --upgrade`\n"
             
             yield f"**[FALLBACK]** Usando modo imperative tradicional...\n"
@@ -7897,11 +7877,11 @@ class Pipe:
         ).strip()
         low = user_msg.lower()
 
-        # ðŸŽ¯ DETECÃ‡ÃƒO DE INTENÃ‡ÃƒO (antes de qualquer processamento)
-        # Comandos de continuaÃ§Ã£o
-        # DetecÃ§Ã£o ampla vs ativaÃ§Ã£o estrita do comando "siga":
-        # - DetecÃ§Ã£o ampla (detectar intenÃ§Ã£o): lista flexÃ­vel de termos (override por valves)
-        # - AtivaÃ§Ã£o estrita (executar plano): subconjunto opcional/estrito, controlado por valve
+        # 🎯 DETECÇÃO DE INTENÇÃO (antes de qualquer processamento)
+        # Comandos de continuação
+        # Detecção ampla vs ativação estrita do comando "siga":
+        # - Detecção ampla (detectar intenção): lista flexível de termos (override por valves)
+        # - Ativação estrita (executar plano): subconjunto opcional/estrito, controlado por valve
         continue_terms_default = (
             "siga","continue","prosseguir","continua","prossegue",
             "go on","keep going","next"
@@ -7910,7 +7890,7 @@ class Pipe:
         continue_terms = tuple(terms_override) if terms_override else continue_terms_default
         is_continue_command = any(t in low for t in continue_terms)
 
-        # Gate estrito opcional para ativaÃ§Ã£o (evita auto-execuÃ§Ã£o por termos ambÃ­guos)
+        # Gate estrito opcional para ativação (evita auto-execução por termos ambíguos)
         strict_activation = getattr(self.valves, "STRICT_CONTINUE_ACTIVATION", True)
         if strict_activation:
             strict_terms = {"siga", "continue", "prosseguir"}
@@ -7918,7 +7898,7 @@ class Pipe:
         else:
             is_strict_activation = is_continue_command
 
-        # âœ… NOVO: Detectar intenÃ§Ã£o de refinamento de plano
+        # ✅ NOVO: Detectar intenção de refinamento de plano
         refinement_keywords = [
             "adicione", "inclua", "acrescente", "mude", "altere", "ajuste",
             "remova", "tire", "delete", "corrija", "refine", "modifique",
@@ -7928,7 +7908,7 @@ class Pipe:
         is_refinement = any(kw in low for kw in refinement_keywords)
         has_previous_plan = bool(self._last_contract)
 
-        # ðŸ”’ DECISÃƒO: Preservar contexto ou re-detectar?
+        # 🔒 DECISÃO: Preservar contexto ou re-detectar?
         should_preserve_context = (is_strict_activation and is_continue_command) or (
             is_refinement and has_previous_plan
         )
@@ -7948,9 +7928,9 @@ class Pipe:
                 },
                 reason="preserve_context",
             )
-            yield f"**[CONTEXT]** ðŸ”’ Mantendo contexto: {self._detected_context.get('perfil_sugerido', 'N/A')}\n"
+            yield f"**[CONTEXT]** 🔒 Mantendo contexto: {self._detected_context.get('perfil_sugerido', 'N/A')}\n"
             if is_refinement:
-                yield f"**[INFO]** ðŸ’¡ Modo refinamento detectado - ajustando plano existente\n"
+                yield f"**[INFO]** 💡 Modo refinamento detectado - ajustando plano existente\n"
         else:
             # Re-detectar contexto (nova query)
             if hasattr(self, '_context_locked') and self._context_locked:
@@ -7966,13 +7946,13 @@ class Pipe:
                 reason="detect_context",
             )
 
-            # ðŸ”— SINCRONIZAR PERFIL DETECTADO com intent_profile (fonte Ãºnica de verdade)
+            # 🔗 SINCRONIZAR PERFIL DETECTADO com intent_profile (fonte única de verdade)
             if self._detected_context:
                 self._intent_profile = self._detected_context.get(
                     "perfil_sugerido", "company_profile"
                 )
                 logger.info(f"[PIPE] Perfil sincronizado: {self._intent_profile}")
-                yield f"**[CONTEXT]** ðŸ” Perfil: {self._detected_context.get('perfil_sugerido', 'N/A')} | Setor: {self._detected_context.get('setor_principal', 'N/A')} | Tipo: {self._detected_context.get('tipo_pesquisa', 'N/A')}\n"
+                yield f"**[CONTEXT]** 🔍 Perfil: {self._detected_context.get('perfil_sugerido', 'N/A')} | Setor: {self._detected_context.get('setor_principal', 'N/A')} | Tipo: {self._detected_context.get('tipo_pesquisa', 'N/A')}\n"
 
         d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
         # Manual route - single execution path
@@ -7986,13 +7966,13 @@ class Pipe:
             # Try to get contract from stored state first
             if not self._last_contract:
                 # Try to extract contract from message history
-                yield "**[INFO]** Procurando plano no histÃ³rico...\n"
+                yield "**[INFO]** Procurando plano no histórico...\n"
                 contract = await self._extract_contract_from_history(body)
                 if contract:
                     self._last_contract = contract
-                    yield "**[INFO]** âœ… Plano recuperado do histÃ³rico\n"
+                    yield "**[INFO]** ✅ Plano recuperado do histórico\n"
                 else:
-                    yield "**[AVISO]** Nenhum contrato pendente ou encontrado no histÃ³rico\n"
+                    yield "**[AVISO]** Nenhum contrato pendente ou encontrado no histórico\n"
                     yield "**[DICA]** Tente criar um novo plano primeiro\n"
                     return
 
@@ -8000,31 +7980,31 @@ class Pipe:
 
             # Check if LangGraph is available and working
             if not LANGGRAPH_AVAILABLE:
-                yield "**[ERRO]** LangGraph nÃ£o estÃ¡ disponÃ­vel. Instale: pip install langgraph\n"
+                yield "**[ERRO]** LangGraph não está disponível. Instale: pip install langgraph\n"
                 
                 # Debug: Try to detect why
-                yield "\n**[DEBUG]** Verificando instalaÃ§Ã£o do LangGraph...\n"
+                yield "\n**[DEBUG]** Verificando instalação do LangGraph...\n"
                 
                 try:
                     import langgraph
                     version = getattr(langgraph, '__version__', 'unknown')
-                    yield f"- âœ… langgraph importado: versÃ£o {version}\n"
+                    yield f"- ✅ langgraph importado: versão {version}\n"
                 except ImportError as e:
-                    yield f"- âŒ langgraph nÃ£o pode ser importado: {e}\n"
+                    yield f"- ❌ langgraph não pode ser importado: {e}\n"
                 
                 try:
                     from langgraph.graph import StateGraph as _DBG_SG
-                    yield f"- âœ… StateGraph importado com sucesso\n"
+                    yield f"- ✅ StateGraph importado com sucesso\n"
                 except ImportError as e:
-                    yield f"- âŒ StateGraph nÃ£o pode ser importado: {e}\n"
+                    yield f"- ❌ StateGraph não pode ser importado: {e}\n"
                 
                 try:
                     from langgraph.checkpoint.memory import MemorySaver as _DBG_MS
-                    yield f"- âœ… MemorySaver importado com sucesso\n"
+                    yield f"- ✅ MemorySaver importado com sucesso\n"
                 except ImportError as e:
-                    yield f"- âŒ MemorySaver nÃ£o pode ser importado: {e}\n"
+                    yield f"- ❌ MemorySaver não pode ser importado: {e}\n"
                 
-                yield "\n**[SOLUÃ‡ÃƒO]** Execute no terminal:\n"
+                yield "\n**[SOLUÇÃO]** Execute no terminal:\n"
                 yield "```bash\n"
                 yield "pip install langgraph>=0.3.5 --upgrade\n"
                 yield "```\n"
@@ -8038,8 +8018,8 @@ class Pipe:
                 else:
                     raise ImportError("LangGraph not available in this environment")
             except Exception as e:
-                yield f"**[ERRO]** LangGraph nÃ£o estÃ¡ funcionando corretamente: {e}\n"
-                yield "**[SUGESTÃƒO]** Reinstale o LangGraph: pip uninstall langgraph && pip install langgraph\n"
+                yield f"**[ERRO]** LangGraph não está funcionando corretamente: {e}\n"
+                yield "**[SUGESTÃO]** Reinstale o LangGraph: pip uninstall langgraph && pip install langgraph\n"
                 return
 
             # Build graph and execute phases
@@ -8049,10 +8029,10 @@ class Pipe:
 
             # Verify graph has required methods
             if not hasattr(graph, 'ainvoke'):
-                yield "**[ERRO]** Grafo compilado nÃ£o tem mÃ©todo ainvoke. Verifique instalaÃ§Ã£o do LangGraph\n"
+                yield "**[ERRO]** Grafo compilado não tem método ainvoke. Verifique instalação do LangGraph\n"
                 return
 
-            yield f"\n### ðŸš€ ExecuÃ§Ã£o iniciada com LangGraph\n"
+            yield f"\n### 🚀 Execução iniciada com LangGraph\n"
             
             # ===== GLOBAL STATE PERSISTENCE =====
             # Initialize global state that persists across all phases
@@ -8086,10 +8066,10 @@ class Pipe:
                 phase_index += 1
                 ph = phases_to_execute[phase_index - 1]
                 objetivo = ph["objetivo"]
-                # âœ… FIX: Use seed_core (rich query) instead of seed_query (short)
+                # ✅ FIX: Use seed_core (rich query) instead of seed_query (short)
                 q = ph.get("seed_core") or ph.get("seed_query", "")
                 
-                yield f"\n**Fase {phase_index}** â€“ {objetivo}\n"
+                yield f"\n**Fase {phase_index}** – {objetivo}\n"
                 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     yield f"**[DEBUG]** Cache global: {len(global_state['scraped_cache'])} URLs, {len(global_state['used_claim_hashes'])} hashes\n"
@@ -8155,15 +8135,15 @@ class Pipe:
                     final_synthesis=None,
                 )
 
-                # âœ… CRITICAL: Add event emitter to state so all nodes can communicate with chat
+                # ✅ CRITICAL: Add event emitter to state so all nodes can communicate with chat
                 initial_state["__event_emitter__"] = __event_emitter__
 
                 # ===== EXECUTE GRAPH (LangGraph manages internal loops) =====
                 try:
                     phase_start_time = time.time()
                     
-                    # âœ… CRITICAL: Let LangGraph handle ALL internal loops
-                    # The graph will automatically loop discoveryâ†’scrapeâ†’reduceâ†’analyzeâ†’judge
+                    # ✅ CRITICAL: Let LangGraph handle ALL internal loops
+                    # The graph will automatically loop discovery→scrape→reduce→analyze→judge
                     # based on the should_continue router decisions
                     try:
                         # LangGraph requires config with thread_id for checkpointer
@@ -8179,12 +8159,12 @@ class Pipe:
                             
                     except AttributeError as e:
                         if "ainvoke" in str(e):
-                            yield f"**[ERRO]** MÃ©todo ainvoke nÃ£o disponÃ­vel no grafo. Verifique instalaÃ§Ã£o do LangGraph\n"
+                            yield f"**[ERRO]** Método ainvoke não disponível no grafo. Verifique instalação do LangGraph\n"
                             continue
                         else:
                             raise
                     except Exception as e:
-                        yield f"**[ERRO]** Falha na execuÃ§Ã£o do LangGraph: {e}\n"
+                        yield f"**[ERRO]** Falha na execução do LangGraph: {e}\n"
                         logger.error(f"LangGraph execution failed: {e}")
                         continue
                     
@@ -8201,13 +8181,13 @@ class Pipe:
                     if missing:
                         logger.error(f"[PHASE][{correlation_id}] Missing fields in final_state: {missing}")
                         yield f"**[ERRO]** State corruption detected: missing {missing}\n"
-                        yield f"**[AÃ‡ÃƒO]** Parando execuÃ§Ã£o para evitar crashes\n"
-                        break  # Parar execuÃ§Ã£o de fases
+                        yield f"**[AÇÃO]** Parando execução para evitar crashes\n"
+                        break  # Parar execução de fases
                     
                     # ===== END PHASE STATE MUTATION VALIDATION =====
                     
                     yield f"**[FASE {phase_index}]** Verdict: {verdict} (loops: {loop_count})\n"
-                    yield f"**[FASE {phase_index}]** DuraÃ§Ã£o: {phase_duration:.1f}s\n"
+                    yield f"**[FASE {phase_index}]** Duração: {phase_duration:.1f}s\n"
                     
                     # ===== UPDATE GLOBAL STATE =====
                     # Preserve state for next phase
@@ -8231,7 +8211,7 @@ class Pipe:
                     phase_results.append(phase_result)
                     global_state["phase_results"].append(phase_result)
                     
-                    # âœ… FIX: Populate telemetry_data with phase info
+                    # ✅ FIX: Populate telemetry_data with phase info
                     telemetry_data["phases"].append({
                         "phase": phase_index,
                         "objective": objetivo,
@@ -8267,15 +8247,15 @@ class Pipe:
 
             # Emitir telemetria estruturada
             if self.valves.DEBUG_LOGGING:
-                yield f"\n**[TELEMETRIA]** ðŸ“Š Dados estruturados da execuÃ§Ã£o:\n"
+                yield f"\n**[TELEMETRIA]** 📊 Dados estruturados da execução:\n"
                 yield f"```json\n{json.dumps(telemetry_data, indent=2, ensure_ascii=False)}\n```\n"
 
-            yield f"\n**[SÃNTESE FINAL]**\n"
+            yield f"\n**[SÍNTESE FINAL]**\n"
             # Call _synthesize_final with phase results
             async for synthesis_chunk in self._synthesize_final(phase_results, global_state, cr_callable, user_msg, body, __event_emitter__):
                 yield synthesis_chunk
 
-            # ðŸ”“ UNLOCK contexto apÃ³s conclusÃ£o para permitir nova detecÃ§Ã£o
+            # 🔓 UNLOCK contexto após conclusão para permitir nova detecção
             self._last_contract = None
             if hasattr(self, '_context_locked'):
                 self._context_locked = False
@@ -8291,7 +8271,7 @@ class Pipe:
             requested_phases if requested_phases else self.valves.DEFAULT_PHASE_COUNT
         )
 
-        yield f"**[PLANNER]** AtÃ© {phases} fases (conforme necessÃ¡rio)...\n\n"
+        yield f"**[PLANNER]** Até {phases} fases (conforme necessário)...\n\n"
 
         planner = PlannerLLM(self.valves)
         out = await planner.run(
@@ -8303,12 +8283,12 @@ class Pipe:
 
         # Validate contract
         if not isinstance(out, dict) or "contract" not in out:
-            yield "**[ERRO]** Contrato invÃ¡lido gerado pelo Planner\n"
+            yield "**[ERRO]** Contrato inválido gerado pelo Planner\n"
             return
         self._last_contract = out["contract"]
-        yield "**[INFO]** âœ… Contrato gerado com sucesso\n"
+        yield "**[INFO]** ✅ Contrato gerado com sucesso\n"
         # Render contract for user
-        yield f"\nðŸ“‹ **Plano de Pesquisa**\n\n"
+        yield f"\n📋 **Plano de Pesquisa**\n\n"
         for i, phase in enumerate(out["contract"].get("fases", []), 1):
             yield f"**Fase {i}:** {phase.get('objetivo', 'N/A')}\n"
             yield f"- Query: {phase.get('query_sugerida', 'N/A')}\n"
@@ -8328,33 +8308,33 @@ class Pipe:
         body: dict = None,
         __event_emitter__=None,
     ):
-        """SÃ­ntese final adaptativa com Context Reducer ou deduplicaÃ§Ã£o + LLM
+        """Síntese final adaptativa com Context Reducer ou deduplicação + LLM
 
         FLUXO:
-        1. **Context Reducer** (se habilitado): ReduÃ§Ã£o global com todas as queries
+        1. **Context Reducer** (se habilitado): Redução global com todas as queries
         2. **Fallback** (se CR desabilitado/falhar):
-           - DeduplicaÃ§Ã£o MMR-lite (preserva ordem ou ordena por tamanho)
+           - Deduplicação MMR-lite (preserva ordem ou ordena por tamanho)
            - Truncamento ao MAX_CONTEXT_CHARS
-           - DetecÃ§Ã£o de contexto unificado (usa _detected_context ou detecta)
-           - SÃ­ntese adaptativa com UMA chamada LLM (prompt dinÃ¢mico)
+           - Detecção de contexto unificado (usa _detected_context ou detecta)
+           - Síntese adaptativa com UMA chamada LLM (prompt dinâmico)
 
         ADAPTIVE SYNTHESIS:
         - Usa _detected_context para determinar setor, tipo, perfil
-        - Gera prompt com instruÃ§Ãµes especÃ­ficas para o contexto
-        - Estrutura de relatÃ³rio adaptada (seÃ§Ãµes, estilo, foco)
-        - Substituiu hardcoding de HPPC por template genÃ©rico
+        - Gera prompt com instruções específicas para o contexto
+        - Estrutura de relatório adaptada (seções, estilo, foco)
+        - Substituiu hardcoding de HPPC por template genérico
 
         Args:
             phase_results: Lista de resultados de cada fase executada
             orch: Orchestrator com contexto acumulado e cache de URLs
-            user_msg: Query original do usuÃ¡rio (para detecÃ§Ã£o de contexto)
-            body: Body da requisiÃ§Ã£o (para histÃ³rico de mensagens)
+            user_msg: Query original do usuário (para detecção de contexto)
+            body: Body da requisição (para histórico de mensagens)
         """
         # Try Context Reducer first (direct tool invocation)
         if self.valves.ENABLE_CONTEXT_REDUCER and cr_callable:
             try:
-                await _safe_emit(__event_emitter__, "**[SÃNTESE]** Context Reducer global...\n")
-                yield "**[SÃNTESE]** Context Reducer global...\n"
+                await _safe_emit(__event_emitter__, "**[SÍNTESE]** Context Reducer global...\n")
+                yield "**[SÍNTESE]** Context Reducer global...\n"
                 
                 # Get accumulated context from global state or phase results
                 accumulated_context = ""
@@ -8367,8 +8347,8 @@ class Pipe:
                     accumulated_context = (last_result or {}).get("accumulated_context", "")
                 
                 if not accumulated_context:
-                    await _safe_emit(__event_emitter__, "**[INFO]** Nenhum contexto acumulado disponÃ­vel\n")
-                    yield "**[INFO]** Nenhum contexto acumulado disponÃ­vel\n"
+                    await _safe_emit(__event_emitter__, "**[INFO]** Nenhum contexto acumulado disponível\n")
+                    yield "**[INFO]** Nenhum contexto acumulado disponível\n"
                     final = None
                 else:
                     # Prepare context reducer input
@@ -8417,12 +8397,12 @@ class Pipe:
                     
                     total_urls = len(scraped_cache)
                     total_phases = len(phase_results)
-                    await _safe_emit(__event_emitter__, f"\n---\n**ðŸ“Š EstatÃ­sticas:**\n")
-                    yield f"\n---\n**ðŸ“Š EstatÃ­sticas:**\n"
+                    await _safe_emit(__event_emitter__, f"\n---\n**📊 Estatísticas:**\n")
+                    yield f"\n---\n**📊 Estatísticas:**\n"
                     await _safe_emit(__event_emitter__, f"- Fases: {total_phases}\n")
                     yield f"- Fases: {total_phases}\n"
-                    await _safe_emit(__event_emitter__, f"- URLs Ãºnicas scraped: {total_urls}\n")
-                    yield f"- URLs Ãºnicas scraped: {total_urls}\n"
+                    await _safe_emit(__event_emitter__, f"- URLs únicas scraped: {total_urls}\n")
+                    yield f"- URLs únicas scraped: {total_urls}\n"
                     await _safe_emit(__event_emitter__, f"- Contexto acumulado: {len(accumulated_context)} chars\n")
                     yield f"- Contexto acumulado: {len(accumulated_context)} chars\n"
                     return
@@ -8435,31 +8415,31 @@ class Pipe:
                 yield f"**[ERRO]** Context Reducer: {e}\n"
                 final = None
 
-        # Fallback: deduplicar (merge+dedupe+MMR-lite) e depois sintetizar com UMA ÃšNICA chamada ao LLM
-        await _safe_emit(__event_emitter__, "**[SÃNTESE]** SÃ­ntese completa e detalhada (sem Context Reducer)...\n")
-        yield "**[SÃNTESE]** SÃ­ntese completa e detalhada (sem Context Reducer)...\n"
+        # Fallback: deduplicar (merge+dedupe+MMR-lite) e depois sintetizar com UMA ÚNICA chamada ao LLM
+        await _safe_emit(__event_emitter__, "**[SÍNTESE]** Síntese completa e detalhada (sem Context Reducer)...\n")
+        yield "**[SÍNTESE]** Síntese completa e detalhada (sem Context Reducer)...\n"
 
         def _paragraphs(text: str) -> List[str]:
-            """Extrai parÃ¡grafos do texto, suportando mÃºltiplos formatos de separaÃ§Ã£o
+            """Extrai parágrafos do texto, suportando múltiplos formatos de separação
 
-            Detecta automaticamente o formato baseado na densidade de parÃ¡grafos:
-            - Densidade baixa (>2000 chars/parÃ¡grafo mÃ©dio) â†’ markdown com \n Ãºnico
-            - Densidade alta (<500 chars/parÃ¡grafo mÃ©dio) â†’ formato normal com \n\n
+            Detecta automaticamente o formato baseado na densidade de parágrafos:
+            - Densidade baixa (>2000 chars/parágrafo médio) → markdown com \n único
+            - Densidade alta (<500 chars/parágrafo médio) → formato normal com \n\n
             """
             if not text:
                 return []
 
-            # Tentar primeiro com duplo newline (formato padrÃ£o do accumulator)
+            # Tentar primeiro com duplo newline (formato padrão do accumulator)
             parts = [p.strip() for p in text.split("\n\n") if p.strip()]
 
-            # Calcular densidade de parÃ¡grafos (chars por parÃ¡grafo)
+            # Calcular densidade de parágrafos (chars por parágrafo)
             avg_paragraph_size = len(text) / max(len(parts), 1)
 
-            # Se densidade Ã© muito baixa (parÃ¡grafos muito grandes), provavelmente Ã© markdown com \n Ãºnico
-            # Threshold: >2000 chars/parÃ¡grafo mÃ©dio indica blocos gigantes, nÃ£o parÃ¡grafos reais
+            # Se densidade é muito baixa (parágrafos muito grandes), provavelmente é markdown com \n único
+            # Threshold: >2000 chars/parágrafo médio indica blocos gigantes, não parágrafos reais
             if avg_paragraph_size > 2000 or "\n\n" not in text:
-                # Markdown do scraper/Context Reducer usa \n Ãºnico
-                # Agrupar linhas nÃ£o vazias em blocos (parÃ¡grafos)
+                # Markdown do scraper/Context Reducer usa \n único
+                # Agrupar linhas não vazias em blocos (parágrafos)
                 lines = text.split("\n")
                 paragraphs = []
                 current_block = []
@@ -8469,14 +8449,14 @@ class Pipe:
                     if line_stripped:
                         current_block.append(line_stripped)
                     else:
-                        # Linha vazia = fim de parÃ¡grafo
+                        # Linha vazia = fim de parágrafo
                         if current_block:
                             paragraph = " ".join(current_block)
-                            if len(paragraph) > 20:  # Filtrar parÃ¡grafos muito curtos
+                            if len(paragraph) > 20:  # Filtrar parágrafos muito curtos
                                 paragraphs.append(paragraph)
                             current_block = []
 
-                # Adicionar Ãºltimo bloco
+                # Adicionar último bloco
                 if current_block:
                     paragraph = " ".join(current_block)
                     if len(paragraph) > 20:
@@ -8484,13 +8464,13 @@ class Pipe:
 
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     print(
-                        f"[DEDUP] Densidade baixa detectada ({avg_paragraph_size:.0f} chars/parÃ¡grafo)"
+                        f"[DEDUP] Densidade baixa detectada ({avg_paragraph_size:.0f} chars/parágrafo)"
                     )
                     print(
-                        f"[DEDUP] Usando extraÃ§Ã£o linha-por-linha: {len(parts)} â†’ {len(paragraphs)} parÃ¡grafos"
+                        f"[DEDUP] Usando extração linha-por-linha: {len(parts)} → {len(paragraphs)} parágrafos"
                     )
 
-                # âœ… v4.8.1: Se ainda houver parÃ¡grafos gigantes, quebrar por sentenÃ§as/tamanho mÃ¡ximo
+                # ✅ v4.8.1: Se ainda houver parágrafos gigantes, quebrar por sentenças/tamanho máximo
                 max_paragraph_chars = getattr(self.valves, "DEDUP_MAX_PARAGRAPH_CHARS", 1200)
                 final_paragraphs: List[str] = []
                 sentence_splitter = re.compile(r"(?<=[.!?])\s+")
@@ -8519,22 +8499,22 @@ class Pipe:
 
                 if getattr(self.valves, "VERBOSE_DEBUG", False) and len(final_paragraphs) != len(paragraphs):
                     print(
-                        f"[DEDUP] FragmentaÃ§Ã£o adicional aplicada: {len(paragraphs)} â†’ {len(final_paragraphs)} parÃ¡grafos"
+                        f"[DEDUP] Fragmentação adicional aplicada: {len(paragraphs)} → {len(final_paragraphs)} parágrafos"
                     )
 
                 return [p for p in final_paragraphs if len(p) > 20]
 
-            # Densidade normal: usar split padrÃ£o
+            # Densidade normal: usar split padrão
             if getattr(self.valves, "VERBOSE_DEBUG", False):
                 print(
-                    f"[DEDUP] Densidade normal ({avg_paragraph_size:.0f} chars/parÃ¡grafo)"
+                    f"[DEDUP] Densidade normal ({avg_paragraph_size:.0f} chars/parágrafo)"
                 )
-                print(f"[DEDUP] Usando split por \\n\\n: {len(parts)} parÃ¡grafos")
+                print(f"[DEDUP] Usando split por \\n\\n: {len(parts)} parágrafos")
 
             return [p for p in parts if len(p) > 20]
 
         def _merge_small_paragraphs(paragraphs: list, min_chars: int = 100) -> list:
-            """Combina parÃ¡grafos pequenos para evitar fragmentaÃ§Ã£o"""
+            """Combina parágrafos pequenos para evitar fragmentação"""
             if not paragraphs:
                 return []
             merged = []
@@ -8562,30 +8542,30 @@ class Pipe:
             raw_context = (last_result or {}).get("accumulated_context", "")
         
         if not raw_context:
-            await _safe_emit(__event_emitter__, "**[INFO]** Nenhum contexto disponÃ­vel para sÃ­ntese\n")
-            yield "**[INFO]** Nenhum contexto disponÃ­vel para sÃ­ntese\n"
+            await _safe_emit(__event_emitter__, "**[INFO]** Nenhum contexto disponível para síntese\n")
+            yield "**[INFO]** Nenhum contexto disponível para síntese\n"
             return
         
         _emit_decision_snapshot(step="synthesis", vector={"context_chars": len(raw_context)}, reason="start")
-        yield f"**[SÃNTESE]** Contexto bruto: {len(raw_context)} chars\n"
+        yield f"**[SÍNTESE]** Contexto bruto: {len(raw_context)} chars\n"
 
         if self.valves.ENABLE_DEDUPLICATION:
             raw_paragraphs = _paragraphs(raw_context)
 
             # v4.4: Usar Deduplicator centralizado (mesmo do Orchestrator)
-            # SÃ­ntese: SEM shuffle (fases nÃ£o sÃ£o cronolÃ³gicas, ordem Ã© estrutural)
+            # Síntese: SEM shuffle (fases não são cronológicas, ordem é estrutural)
             deduplicator = Deduplicator(self.valves)
             
-            # Usar estratÃ©gia especÃ­fica da Synthesis
+            # Usar estratégia específica da Synthesis
             algorithm = getattr(self.valves, "SYNTHESIS_DEDUP_ALGORITHM", "mmr")
             model_name = getattr(self.valves, "SYNTHESIS_DEDUP_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
             threshold = getattr(self.valves, "DEDUP_SIMILARITY_THRESHOLD", 0.85)
-            print(f"[SÃNTESE DEDUP] ðŸ§  Algoritmo: {algorithm.upper()}")
-            print(f"[SÃNTESE DEDUP] ðŸ“ Threshold: {threshold}")
-            print(f"[SÃNTESE DEDUP] ðŸ“Š Input: {len(raw_paragraphs)} parÃ¡grafos â†’ Target: {self.valves.MAX_DEDUP_PARAGRAPHS}")
-            print(f"[SÃNTESE DEDUP] ðŸ” Valves: ENABLE_DEDUPLICATION={self.valves.ENABLE_DEDUPLICATION}")
-            print(f"[SÃNTESE DEDUP] ðŸ” MAX_DEDUP_PARAGRAPHS: {self.valves.MAX_DEDUP_PARAGRAPHS}")
-            print(f"[SÃNTESE DEDUP] ðŸ” Type: {type(self.valves.MAX_DEDUP_PARAGRAPHS)}")
+            print(f"[SÍNTESE DEDUP] 🧠 Algoritmo: {algorithm.upper()}")
+            print(f"[SÍNTESE DEDUP] 📏 Threshold: {threshold}")
+            print(f"[SÍNTESE DEDUP] 📊 Input: {len(raw_paragraphs)} parágrafos → Target: {self.valves.MAX_DEDUP_PARAGRAPHS}")
+            print(f"[SÍNTESE DEDUP] 🔍 Valves: ENABLE_DEDUPLICATION={self.valves.ENABLE_DEDUPLICATION}")
+            print(f"[SÍNTESE DEDUP] 🔍 MAX_DEDUP_PARAGRAPHS: {self.valves.MAX_DEDUP_PARAGRAPHS}")
+            print(f"[SÍNTESE DEDUP] 🔍 Type: {type(self.valves.MAX_DEDUP_PARAGRAPHS)}")
             
             # Extrair must_terms do contexto para context-aware dedup
             extracted_must_terms = []
@@ -8594,7 +8574,7 @@ class Pipe:
                 entities = self._last_contract.get("entities", {}).get("canonical", [])
                 extracted_must_terms = entities[:5]  # Limitar a 5 termos mais relevantes
             
-            # âœ… [FIX 2] Usar target DINÃ‚MICO em vez de fixo 200
+            # ✅ [FIX 2] Usar target DINÂMICO em vez de fixo 200
             target_paragraphs = max(
                 100,
                 min(
@@ -8609,9 +8589,9 @@ class Pipe:
                 algorithm=algorithm,
                 threshold=threshold,
                 preserve_order=self.valves.PRESERVE_PARAGRAPH_ORDER,  # Respeita valve
-                preserve_recent_pct=0.0,  # SÃ­ntese nÃ£o preserva recent (processa tudo igual)
-                shuffle_older=False,  # SEM shuffle (ordem estrutural, nÃ£o cronolÃ³gica)
-                reference_first=False,  # SEM referÃªncia (processa tudo igual)
+                preserve_recent_pct=0.0,  # Síntese não preserva recent (processa tudo igual)
+                shuffle_older=False,  # SEM shuffle (ordem estrutural, não cronológica)
+                reference_first=False,  # SEM referência (processa tudo igual)
                 # NOVO: Context-aware parameters
                 must_terms=extracted_must_terms,
                 enable_context_aware=self.valves.ENABLE_CONTEXT_AWARE_DEDUP,
@@ -8619,7 +8599,7 @@ class Pipe:
 
             deduped_paragraphs = dedupe_result["chunks"]
 
-            # âœ… [FIX 3] Combinar pequenos parÃ¡grafos (inline helper para Analyst)
+            # ✅ [FIX 3] Combinar pequenos parágrafos (inline helper para Analyst)
             def _merge_small_paragraphs_inline_for_analyst(paragraphs: list, min_chars: int = 100) -> list:
                 merged = []
                 buffer = ""
@@ -8640,7 +8620,7 @@ class Pipe:
             )
             
             if getattr(self.valves, "VERBOSE_DEBUG", False):
-                print(f"[FIX 3] Merge pÃ³s-dedup: {dedupe_result['deduped_count']} â†’ {len(deduped_paragraphs)} parÃ¡grafos")
+                print(f"[FIX 3] Merge pós-dedup: {dedupe_result['deduped_count']} → {len(deduped_paragraphs)} parágrafos")
             
             deduped_context = "\n\n".join(deduped_paragraphs)
 
@@ -8649,12 +8629,12 @@ class Pipe:
                 if self.valves.PRESERVE_PARAGRAPH_ORDER
                 else "ordenado por tamanho"
             )
-            await _safe_emit(__event_emitter__, f"**[SÃNTESE]** DeduplicaÃ§Ã£o ativa ({order_mode}, {dedupe_result['algorithm_used']}): {dedupe_result['original_count']} â†’ {dedupe_result['deduped_count']} parÃ¡grafos ({dedupe_result['reduction_pct']:.1f}% reduÃ§Ã£o)\n")
-            yield f"**[SÃNTESE]** DeduplicaÃ§Ã£o ativa ({order_mode}, {dedupe_result['algorithm_used']}): {dedupe_result['original_count']} â†’ {dedupe_result['deduped_count']} parÃ¡grafos ({dedupe_result['reduction_pct']:.1f}% reduÃ§Ã£o)\n"
-            await _safe_emit(__event_emitter__, f"**[SÃNTESE]** Tokens economizados: ~{dedupe_result['tokens_saved']}\n")
-            yield f"**[SÃNTESE]** Tokens economizados: ~{dedupe_result['tokens_saved']}\n"
+            await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Deduplicação ativa ({order_mode}, {dedupe_result['algorithm_used']}): {dedupe_result['original_count']} → {dedupe_result['deduped_count']} parágrafos ({dedupe_result['reduction_pct']:.1f}% redução)\n")
+            yield f"**[SÍNTESE]** Deduplicação ativa ({order_mode}, {dedupe_result['algorithm_used']}): {dedupe_result['original_count']} → {dedupe_result['deduped_count']} parágrafos ({dedupe_result['reduction_pct']:.1f}% redução)\n"
+            await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Tokens economizados: ~{dedupe_result['tokens_saved']}\n")
+            yield f"**[SÍNTESE]** Tokens economizados: ~{dedupe_result['tokens_saved']}\n"
 
-            # âœ… [DIAGNÃ“STICO] AnÃ¡lise de fragmentaÃ§Ã£o
+            # ✅ [DIAGNÓSTICO] Análise de fragmentação
             if raw_paragraphs:
                 sizes = [len(p) for p in raw_paragraphs]
                 avg_size = sum(sizes) / len(sizes) if sizes else 0
@@ -8662,55 +8642,55 @@ class Pipe:
                 min_size = min(sizes) if sizes else 0
                 median_size = sorted(sizes)[len(sizes)//2] if sizes else 0
                 
-                # DistribuiÃ§Ã£o percentil
+                # Distribuição percentil
                 p25 = sorted(sizes)[int(len(sizes)*0.25)] if sizes else 0
                 p75 = sorted(sizes)[int(len(sizes)*0.75)] if sizes else 0
                 
                 reduction_factor = len(raw_paragraphs) / self.valves.MAX_DEDUP_PARAGRAPHS if self.valves.MAX_DEDUP_PARAGRAPHS > 0 else 0
                 
-                print(f"\n[DEDUP DIAGNÃ“STICO]")
-                print(f"  ðŸ“Š Total chars: {len(raw_context)}")
-                print(f"  ðŸ“ ParÃ¡grafos: {len(raw_paragraphs)}")
-                print(f"  ðŸ“ˆ Tamanho mÃ©dio: {avg_size:.0f} chars")
-                print(f"  ðŸ“ Mediana: {median_size:.0f} chars")
-                print(f"  â¬‡ï¸  P25: {p25:.0f} chars")
-                print(f"  â¬†ï¸  P75: {p75:.0f} chars")
-                print(f"  ðŸ”¸ Min: {min_size:.0f} chars | Max: {max_size:.0f} chars")
-                print(f"  âš¡ Fator reduÃ§Ã£o necessÃ¡rio: {reduction_factor:.1f}x")
-                print(f"  âœ… ReduÃ§Ã£o viÃ¡vel: {'SIM' if avg_size * reduction_factor > 50 else 'ALERTA - Pode ficar muito fragmentado'}")
+                print(f"\n[DEDUP DIAGNÓSTICO]")
+                print(f"  📊 Total chars: {len(raw_context)}")
+                print(f"  📝 Parágrafos: {len(raw_paragraphs)}")
+                print(f"  📈 Tamanho médio: {avg_size:.0f} chars")
+                print(f"  📍 Mediana: {median_size:.0f} chars")
+                print(f"  ⬇️  P25: {p25:.0f} chars")
+                print(f"  ⬆️  P75: {p75:.0f} chars")
+                print(f"  🔸 Min: {min_size:.0f} chars | Max: {max_size:.0f} chars")
+                print(f"  ⚡ Fator redução necessário: {reduction_factor:.1f}x")
+                print(f"  ✅ Redução viável: {'SIM' if avg_size * reduction_factor > 50 else 'ALERTA - Pode ficar muito fragmentado'}")
                 print()
         else:
             deduped_context = raw_context
-            await _safe_emit(__event_emitter__, f"**[SÃNTESE]** DeduplicaÃ§Ã£o desabilitada: usando todo o contexto\n")
-            yield f"**[SÃNTESE]** DeduplicaÃ§Ã£o desabilitada: usando todo o contexto\n"
+            await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Deduplicação desabilitada: usando todo o contexto\n")
+            yield f"**[SÍNTESE]** Deduplicação desabilitada: usando todo o contexto\n"
 
         # Aplicar limite de tamanho
         max_chars = self.valves.MAX_CONTEXT_CHARS
         if len(deduped_context) > max_chars:
-            # Truncar mantendo parÃ¡grafos completos
+            # Truncar mantendo parágrafos completos
             truncated = deduped_context[:max_chars]
             last_paragraph = truncated.rfind("\n\n")
-            if last_paragraph > max_chars * 0.8:  # Se nÃ£o perder muito
+            if last_paragraph > max_chars * 0.8:  # Se não perder muito
                 deduped_context = truncated[:last_paragraph]
             else:
                 deduped_context = truncated
-            await _safe_emit(__event_emitter__, f"**[SÃNTESE]** Contexto truncado: {len(deduped_context)} chars (limite: {max_chars})\n")
-            yield f"**[SÃNTESE]** Contexto truncado: {len(deduped_context)} chars (limite: {max_chars})\n"
+            await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Contexto truncado: {len(deduped_context)} chars (limite: {max_chars})\n")
+            yield f"**[SÍNTESE]** Contexto truncado: {len(deduped_context)} chars (limite: {max_chars})\n"
             _emit_decision_snapshot(step="synthesis", vector={"context_chars": len(deduped_context), "limit": max_chars}, reason="after_truncation")
         else:
-            await _safe_emit(__event_emitter__, f"**[SÃNTESE]** Contexto dentro do limite: {len(deduped_context)} chars\n")
-            yield f"**[SÃNTESE]** Contexto dentro do limite: {len(deduped_context)} chars\n"
+            await _safe_emit(__event_emitter__, f"**[SÍNTESE]** Contexto dentro do limite: {len(deduped_context)} chars\n")
+            yield f"**[SÍNTESE]** Contexto dentro do limite: {len(deduped_context)} chars\n"
             _emit_decision_snapshot(step="synthesis", vector={"context_chars": len(deduped_context)}, reason="within_limit")
         
         try:
-            # Log do contexto que serÃ¡ usado
+            # Log do contexto que será usado
             if self.valves.DEBUG_LOGGING:
-                await _safe_emit(__event_emitter__, f"**[DEBUG]** Contexto para sÃ­ntese: {len(deduped_context)} chars\n")
-                yield f"**[DEBUG]** Contexto para sÃ­ntese: {len(deduped_context)} chars\n"
+                await _safe_emit(__event_emitter__, f"**[DEBUG]** Contexto para síntese: {len(deduped_context)} chars\n")
+                yield f"**[DEBUG]** Contexto para síntese: {len(deduped_context)} chars\n"
                 await _safe_emit(__event_emitter__, f"**[DEBUG]** Primeiros 200 chars: {deduped_context[:200]}...\n")
                 yield f"**[DEBUG]** Primeiros 200 chars: {deduped_context[:200]}...\n"
 
-            # Coletar estatÃ­sticas para incluir no prompt
+            # Coletar estatísticas para incluir no prompt
             # Get scraped cache from global state or phase results
             scraped_cache = {}
             if global_state and "scraped_cache" in global_state:
@@ -8761,7 +8741,7 @@ class Pipe:
                 if summary:
                     hints_lines.append(f"- Resumo: {summary}")
                 if facts:
-                    # pegar atÃ© 3
+                    # pegar até 3
                     for f in facts[:3]:
                         hints_lines.append(f"- Fato: {_txt(f)}")
                 if lacunas:
@@ -8774,9 +8754,9 @@ class Pipe:
                 hints_lines.append("")
             analyst_hints = "\n".join(hints_lines)[
                 :4000
-            ]  # limitar tamanho para seguranÃ§a
+            ]  # limitar tamanho para segurança
 
-            # USAR CONTEXTO CENTRALIZADO jÃ¡ detectado no inÃ­cio do pipe
+            # USAR CONTEXTO CENTRALIZADO já detectado no início do pipe
             if not self._detected_context:
                 self._detected_context = await self._detect_unified_context(
                     user_msg, body
@@ -8787,7 +8767,7 @@ class Pipe:
             key_questions = research_context.get("key_questions", [])
             research_objectives = research_context.get("research_objectives", [])
 
-            # Extrair informaÃ§Ãµes do contract (entidades, objetivos de fase)
+            # Extrair informações do contract (entidades, objetivos de fase)
             contract_entities = []
             phase_objectives = []
             if self._last_contract:
@@ -8805,7 +8785,7 @@ class Pipe:
                     if phase_obj:
                         phase_objectives.append(f"{idx}. {phase_name}: {phase_obj}")
 
-            # REFACTORED (v4.3.1 - P1D): Usar funÃ§Ã£o consolidada para construir seÃ§Ãµes
+            # REFACTORED (v4.3.1 - P1D): Usar função consolidada para construir seções
             sections = _build_synthesis_sections(
                 key_questions=key_questions,
                 research_objectives=research_objectives,
@@ -8816,41 +8796,41 @@ class Pipe:
             # sections is a string, not a dict
             sections_text = sections
 
-            # UMA ÃšNICA chamada ao LLM com prompt adaptativo baseado no contexto
-            synthesis_prompt = f"""VocÃª Ã© um analista executivo especializado em criar relatÃ³rios executivos completos e narrativos.
+            # UMA ÚNICA chamada ao LLM com prompt adaptativo baseado no contexto
+            synthesis_prompt = f"""Você é um analista executivo especializado em criar relatórios executivos completos e narrativos.
 
-**QUERY ORIGINAL DO USUÃRIO:**
+**QUERY ORIGINAL DO USUÁRIO:**
 {user_msg}
 
 **PERFIL ADAPTATIVO:** {research_context['perfil_descricao']}
-**OBJETIVO ADAPTATIVO:** Criar um relatÃ³rio executivo profissional no estilo {research_context['estilo']}, rico em {research_context['foco_detalhes']}, baseado no contexto de pesquisa fornecido sobre {research_context['tema_principal']}.
+**OBJETIVO ADAPTATIVO:** Criar um relatório executivo profissional no estilo {research_context['estilo']}, rico em {research_context['foco_detalhes']}, baseado no contexto de pesquisa fornecido sobre {research_context['tema_principal']}.
 
 {sections_text}
-âš ï¸ **INSTRUÃ‡Ã•ES CRÃTICAS DE SÃNTESE:**
-1. **RESPONDA Ã€S KEY QUESTIONS**: O relatÃ³rio DEVE responder diretamente Ã s perguntas decisÃ³rias listadas acima. Estruture seÃ§Ãµes para responder cada uma.
-2. **ALCANCE OS RESEARCH OBJECTIVES**: Cada objetivo de pesquisa final deve ser explicitamente endereÃ§ado com anÃ¡lise e evidÃªncias.
-3. **CUBRA TODAS AS ENTIDADES**: O relatÃ³rio DEVE analisar TODAS as entidades especÃ­ficas listadas acima. Crie seÃ§Ãµes/subseÃ§Ãµes dedicadas para cada uma.
-4. **ENTREGUE OS OBJETIVOS DAS FASES**: Cada objetivo de fase deve ser claramente respondido com evidÃªncias do contexto.
-3. **ANÃLISE PROFUNDA**: Examine TODO o contexto fornecido (evidÃªncias, URLs, trechos) - identifique {research_context['foco_detalhes']}
-4. **INTEGRAÃ‡ÃƒO ESTRATÃ‰GICA**: Integre os HINTS dos analistas (resumos, fatos e lacunas por fase) com o contexto principal
-5. **NARRATIVA ESPECÃFICA**: Crie um relatÃ³rio {research_context['estilo']} sobre {research_context['tema_principal']}
-6. **DADOS ESPECÃFICOS**: Inclua nÃºmeros, mÃ©tricas, projetos, tecnologias e indicadores relevantes para {research_context['tema_principal']}
-7. **COBERTURA COMPLETA**: Para cada entidade especÃ­fica (empresa, produto, pessoa), detalhe:
-   - HistÃ³rico e presenÃ§a no mercado
-   - Escopo de serviÃ§os/produtos
+⚠️ **INSTRUÇÕES CRÍTICAS DE SÍNTESE:**
+1. **RESPONDA ÀS KEY QUESTIONS**: O relatório DEVE responder diretamente às perguntas decisórias listadas acima. Estruture seções para responder cada uma.
+2. **ALCANCE OS RESEARCH OBJECTIVES**: Cada objetivo de pesquisa final deve ser explicitamente endereçado com análise e evidências.
+3. **CUBRA TODAS AS ENTIDADES**: O relatório DEVE analisar TODAS as entidades específicas listadas acima. Crie seções/subseções dedicadas para cada uma.
+4. **ENTREGUE OS OBJETIVOS DAS FASES**: Cada objetivo de fase deve ser claramente respondido com evidências do contexto.
+3. **ANÁLISE PROFUNDA**: Examine TODO o contexto fornecido (evidências, URLs, trechos) - identifique {research_context['foco_detalhes']}
+4. **INTEGRAÇÃO ESTRATÉGICA**: Integre os HINTS dos analistas (resumos, fatos e lacunas por fase) com o contexto principal
+5. **NARRATIVA ESPECÍFICA**: Crie um relatório {research_context['estilo']} sobre {research_context['tema_principal']}
+6. **DADOS ESPECÍFICOS**: Inclua números, métricas, projetos, tecnologias e indicadores relevantes para {research_context['tema_principal']}
+7. **COBERTURA COMPLETA**: Para cada entidade específica (empresa, produto, pessoa), detalhe:
+   - Histórico e presença no mercado
+   - Escopo de serviços/produtos
    - Posicionamento e diferenciais
-   - MÃ©tricas e indicadores (quando disponÃ­veis)
-   - CitaÃ§Ãµes e fontes (URLs)
-8. **ESTRUTURA ESPECIALIZADA**: Use as seÃ§Ãµes sugeridas: {', '.join(research_context.get('secoes_sugeridas', ['Resumo', 'AnÃ¡lise', 'ConclusÃµes']))}
-9. **FONTES ESPECÃFICAS**: Cite fontes oficiais e tÃ©cnicas quando relevante (URLs entre parÃªnteses)
-10. **SÃNTESE ESTRATÃ‰GICA**: Integre informaÃ§Ãµes sem repetiÃ§Ã£o, focando em aspectos Ãºnicos e {research_context['foco_detalhes']}
-11. **FORMATO PROFISSIONAL**: Use Markdown narrativo com seÃ§Ãµes bem estruturadas no estilo {research_context['estilo']}
-12. **PRIORIZE DETALHAMENTO SOBRE BREVIDADE**: Prefira um relatÃ³rio rico e detalhado a um genÃ©rico e curto; use TODO o contexto disponÃ­vel
+   - Métricas e indicadores (quando disponíveis)
+   - Citações e fontes (URLs)
+8. **ESTRUTURA ESPECIALIZADA**: Use as seções sugeridas: {', '.join(research_context.get('secoes_sugeridas', ['Resumo', 'Análise', 'Conclusões']))}
+9. **FONTES ESPECÍFICAS**: Cite fontes oficiais e técnicas quando relevante (URLs entre parênteses)
+10. **SÍNTESE ESTRATÉGICA**: Integre informações sem repetição, focando em aspectos únicos e {research_context['foco_detalhes']}
+11. **FORMATO PROFISSIONAL**: Use Markdown narrativo com seções bem estruturadas no estilo {research_context['estilo']}
+12. **PRIORIZE DETALHAMENTO SOBRE BREVIDADE**: Prefira um relatório rico e detalhado a um genérico e curto; use TODO o contexto disponível
 
-**ESTATÃSTICAS DA PESQUISA:**
+**ESTATÍSTICAS DA PESQUISA:**
 - Fases executadas: {total_phases}
 - URLs analisadas: {total_urls}
-- DomÃ­nios consultados: {len(domains)}
+- Domínios consultados: {len(domains)}
 - Contexto processado: {len(deduped_context):,} caracteres
 
 **HINTS DOS ANALISTAS (por fase):**
@@ -8858,23 +8838,23 @@ class Pipe:
 
 **ESTRUTURA ADAPTATIVA BASEADA NO CONTEXTO DETECTADO:**
 
-# ðŸ“‹ RelatÃ³rio Executivo - {research_context['tema_principal']}
+# 📋 Relatório Executivo - {research_context['tema_principal']}
 
-## ðŸŽ¯ Resumo Executivo
-[ParÃ¡grafo {research_context['estilo']} com visÃ£o {research_context['foco_detalhes']} sobre {research_context['tema_principal']}]
+## 🎯 Resumo Executivo
+[Parágrafo {research_context['estilo']} com visão {research_context['foco_detalhes']} sobre {research_context['tema_principal']}]
 
-## ðŸ” Principais Descobertas
-[AnÃ¡lise {research_context['estilo']} integrando as descobertas mais importantes sobre {research_context['tema_principal']}]
+## 🔍 Principais Descobertas
+[Análise {research_context['estilo']} integrando as descobertas mais importantes sobre {research_context['tema_principal']}]
 
 **DIRETRIZES ADAPTATIVAS PARA {research_context['tema_principal'].upper()}:**
 - **FOCO**: {research_context['foco_detalhes']}
 - **ESTILO**: {research_context['estilo']}
-- **SEÃ‡Ã•ES SUGERIDAS**: {', '.join(research_context.get('secoes_sugeridas', ['Resumo', 'AnÃ¡lise', 'ConclusÃµes']))}
+- **SEÇÕES SUGERIDAS**: {', '.join(research_context.get('secoes_sugeridas', ['Resumo', 'Análise', 'Conclusões']))}
 - **TOM**: Use linguagem apropriada para {research_context['perfil_descricao']}
-- **NÃVEL DE DETALHE**: Seja especÃ­fico sobre dados, mÃ©tricas e evidÃªncias relevantes para {research_context['tema_principal']}
-- **CONTEXTO**: Relacione descobertas com tendÃªncias e aspectos especÃ­ficos do setor
+- **NÍVEL DE DETALHE**: Seja específico sobre dados, métricas e evidências relevantes para {research_context['tema_principal']}
+- **CONTEXTO**: Relacione descobertas com tendências e aspectos específicos do setor
 
-Agora, crie o relatÃ³rio executivo completo baseado no contexto abaixo:
+Agora, crie o relatório executivo completo baseado no contexto abaixo:
 
 ---
 
@@ -8884,29 +8864,29 @@ Agora, crie o relatÃ³rio executivo completo baseado no contexto abaixo:
 
 ---
 
-**RELATÃ“RIO EXECUTIVO:**"""
+**RELATÓRIO EXECUTIVO:**"""
 
-            # P1: Exemplo de BOA vs MÃ sÃ­ntese para calibrar saÃ­da do LLM
+            # P1: Exemplo de BOA vs MÁ síntese para calibrar saída do LLM
             synthesis_prompt += """
-ðŸ’¡ EXEMPLO DE BOA vs MÃ SÃNTESE:
+💡 EXEMPLO DE BOA vs MÁ SÍNTESE:
 Query: "Volume de mercado de headhunting Brasil"
 Key_question: "Qual volume anual?"
-âŒ MÃ sÃ­ntese (genÃ©rica):
-"O mercado de headhunting no Brasil Ã© significativo e tem crescido nos Ãºltimos anos."
-âœ… BOA sÃ­ntese (especÃ­fica):
-"O mercado brasileiro de executive search movimentou R$450-500M em 2023 (fonte: RelatÃ³rio ABRH),
-crescimento de 12% vs 2022. Spencer Stuart lidera com ~25% de participaÃ§Ã£o (fonte: Valor EconÃ´mico),
+❌ MÁ síntese (genérica):
+"O mercado de headhunting no Brasil é significativo e tem crescido nos últimos anos."
+✅ BOA síntese (específica):
+"O mercado brasileiro de executive search movimentou R$450-500M em 2023 (fonte: Relatório ABRH),
+crescimento de 12% vs 2022. Spencer Stuart lidera com ~25% de participação (fonte: Valor Econômico),
 seguida por Heidrick (18%) e Flow Executive (15%)."
-â†’ DiferenÃ§a: nÃºmeros concretos, fontes, nomes de players
+→ Diferença: números concretos, fontes, nomes de players
 """
 
-            # âœ… GATE PREVENTIVO: Avisar sobre prompt gigante
+            # ✅ GATE PREVENTIVO: Avisar sobre prompt gigante
             prompt_chars = len(synthesis_prompt)
             prompt_tokens_est = prompt_chars // 4  # Estimativa conservadora
 
             if prompt_tokens_est > 40000:  # ~160k chars
-                yield f"**[âš ï¸ AVISO]** Prompt muito grande ({prompt_tokens_est:,} tokens estimados)!\n"
-                yield f"**[SUGESTÃƒO]** SÃ­ntese pode levar 5-10 minutos. Aguarde...\n"
+                yield f"**[⚠️ AVISO]** Prompt muito grande ({prompt_tokens_est:,} tokens estimados)!\n"
+                yield f"**[SUGESTÃO]** Síntese pode levar 5-10 minutos. Aguarde...\n"
                 yield f"**[CONFIG]** Se houver timeout, aumente nas Valves:\n"
                 yield f"   - LLM_TIMEOUT_SYNTHESIS (atual: {self.valves.LLM_TIMEOUT_SYNTHESIS}s)\n"
                 yield f"   - HTTPX_READ_TIMEOUT (atual: {self.valves.HTTPX_READ_TIMEOUT}s)\n"
@@ -8914,23 +8894,23 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                 yield f"\n"
 
             if self.valves.DEBUG_LOGGING or self.valves.VERBOSE_DEBUG:
-                yield f"**[DEBUG]** Prompt de sÃ­ntese: {prompt_chars:,} chars (~{prompt_tokens_est:,} tokens estimados)\n"
+                yield f"**[DEBUG]** Prompt de síntese: {prompt_chars:,} chars (~{prompt_tokens_est:,} tokens estimados)\n"
                 if prompt_tokens_est > 12000:
-                    yield f"**[AVISO]** Prompt grande (>{prompt_tokens_est:,} tokens) pode causar truncamento ou resposta genÃ©rica!\n"
+                    yield f"**[AVISO]** Prompt grande (>{prompt_tokens_est:,} tokens) pode causar truncamento ou resposta genérica!\n"
 
-            # Fazer UMA Ãºnica chamada ao LLM para gerar o relatÃ³rio completo
-            # Usar modelo especÃ­fico para sÃ­ntese se configurado (pode ser mais capaz)
+            # Fazer UMA única chamada ao LLM para gerar o relatório completo
+            # Usar modelo específico para síntese se configurado (pode ser mais capaz)
             synthesis_model = self.valves.LLM_MODEL_SYNTHESIS or self.valves.LLM_MODEL
             llm = _get_llm(self.valves, model_name=synthesis_model)
 
-            # ParÃ¢metros seguros para GPT-5/O1
+            # Parâmetros seguros para GPT-5/O1
             base_synthesis_params = {"temperature": 0.3}
             generation_kwargs = get_safe_llm_params(
                 synthesis_model, base_synthesis_params
             )
             timeout_synthesis = self.valves.LLM_TIMEOUT_SYNTHESIS
             
-            # ðŸ”§ AUTO-ADJUST timeout for large context
+            # 🔧 AUTO-ADJUST timeout for large context
             context_size = len(deduped_context)
             if context_size > 100000:  # >100k chars
                 # Scale timeout based on context size
@@ -8940,13 +8920,13 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                 scaled_timeout = min(max_timeout, min_timeout + int((context_size - 100000) / 10000 * 600))
                 timeout_synthesis = max(timeout_synthesis, scaled_timeout)
                 if self.valves.DEBUG_LOGGING:
-                    await _safe_emit(__event_emitter__, f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s â†’ {timeout_synthesis}s (contexto: {context_size:,} chars)\n")
-                    yield f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s â†’ {timeout_synthesis}s (contexto: {context_size:,} chars)\n"
+                    await _safe_emit(__event_emitter__, f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s → {timeout_synthesis}s (contexto: {context_size:,} chars)\n")
+                    yield f"**[DEBUG]** Auto-ajuste timeout: {self.valves.LLM_TIMEOUT_SYNTHESIS}s → {timeout_synthesis}s (contexto: {context_size:,} chars)\n"
 
             # Log do modelo sendo usado
             if self.valves.DEBUG_LOGGING:
-                await _safe_emit(__event_emitter__, f"**[DEBUG]** Modelo de sÃ­ntese: {synthesis_model} (params: {generation_kwargs})\n")
-                yield f"**[DEBUG]** Modelo de sÃ­ntese: {synthesis_model} (params: {generation_kwargs})\n"
+                await _safe_emit(__event_emitter__, f"**[DEBUG]** Modelo de síntese: {synthesis_model} (params: {generation_kwargs})\n")
+                yield f"**[DEBUG]** Modelo de síntese: {synthesis_model} (params: {generation_kwargs})\n"
 
             _emit_decision_snapshot(step="synthesis", vector={"model": synthesis_model, "params": generation_kwargs, "timeout": timeout_synthesis}, reason="llm_call_start")
             out = await _safe_llm_run_with_retry(
@@ -8957,11 +8937,11 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                 max_retries=1,
             )
             if not out or not out.get("replies"):
-                raise ValueError("LLM vazio na sÃ­ntese final")
+                raise ValueError("LLM vazio na síntese final")
             report = (out["replies"][0] or "").strip()
             _emit_decision_snapshot(step="synthesis", vector={"ok": bool(report), "chars": len(report or "")}, reason="llm_call_end")
             if not report:
-                raise ValueError("RelatÃ³rio vazio na sÃ­ntese final")
+                raise ValueError("Relatório vazio na síntese final")
             await _safe_emit(__event_emitter__, f"\n{report}\n")
             yield f"\n{report}\n"
 
@@ -9009,7 +8989,7 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                     await _safe_emit(__event_emitter__, f"\n\n**[PDF]** Export failed: {e}\n")
                     yield f"\n\n**[PDF]** Export failed: {e}\n"
 
-            # EstatÃ­sticas avanÃ§adas
+            # Estatísticas avançadas
             # Get scraped cache from global state or phase results
             scraped_cache = {}
             if global_state and "scraped_cache" in global_state:
@@ -9030,8 +9010,8 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
                 except:
                     pass
 
-            await _safe_emit(__event_emitter__, f"\n---\n**ðŸ“Š EstatÃ­sticas da Pesquisa:** Fases={total_phases}, URLs Ãºnicas={total_urls}, DomÃ­nios={len(domains)}, Contexto={len(raw_context):,} chars\n")
-            yield f"\n---\n**ðŸ“Š EstatÃ­sticas da Pesquisa:** Fases={total_phases}, URLs Ãºnicas={total_urls}, DomÃ­nios={len(domains)}, Contexto={len(raw_context):,} chars\n"
+            await _safe_emit(__event_emitter__, f"\n---\n**📊 Estatísticas da Pesquisa:** Fases={total_phases}, URLs únicas={total_urls}, Domínios={len(domains)}, Contexto={len(raw_context):,} chars\n")
+            yield f"\n---\n**📊 Estatísticas da Pesquisa:** Fases={total_phases}, URLs únicas={total_urls}, Domínios={len(domains)}, Contexto={len(raw_context):,} chars\n"
 
         except Exception as e:
             error_msg = str(e)
@@ -9040,46 +9020,46 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             )
 
             if is_timeout:
-                # ðŸ”§ FIX: Calcular timeout HTTP real usado (nÃ£o mostrar PLANNER_REQUEST_TIMEOUT que Ã© irrelevante)
+                # 🔧 FIX: Calcular timeout HTTP real usado (não mostrar PLANNER_REQUEST_TIMEOUT que é irrelevante)
                 effective_http_timeout = max(60, int(timeout_synthesis - 30))
 
-                await _safe_emit(__event_emitter__, f"**[ERRO]** SÃ­ntese completa falhou: {e}\n")
-                yield f"**[ERRO]** SÃ­ntese completa falhou: {e}\n"
-                await _safe_emit(__event_emitter__, f"**[DICA]** Contexto muito grande ({len(deduped_context):,} chars). SugestÃµes:\n")
-                yield f"**[DICA]** Contexto muito grande ({len(deduped_context):,} chars). SugestÃµes:\n"
+                await _safe_emit(__event_emitter__, f"**[ERRO]** Síntese completa falhou: {e}\n")
+                yield f"**[ERRO]** Síntese completa falhou: {e}\n"
+                await _safe_emit(__event_emitter__, f"**[DICA]** Contexto muito grande ({len(deduped_context):,} chars). Sugestões:\n")
+                yield f"**[DICA]** Contexto muito grande ({len(deduped_context):,} chars). Sugestões:\n"
                 # Get max timeout value safely (Pydantic v1/v2 compatibility)
                 try:
                     max_timeout = getattr(self.valves.__fields__['LLM_TIMEOUT_SYNTHESIS'], 'field_info', {}).get('extra', {}).get('le', 1800)
                 except (AttributeError, KeyError):
                     max_timeout = 1800  # fallback
-                await _safe_emit(__event_emitter__, f"  - Aumente LLM_TIMEOUT_SYNTHESIS nas valves (atual: {timeout_synthesis}s, mÃ¡x: {max_timeout}s)\n")
-                yield f"  - Aumente LLM_TIMEOUT_SYNTHESIS nas valves (atual: {timeout_synthesis}s, mÃ¡x: {max_timeout}s)\n"
-                await _safe_emit(__event_emitter__, f"  - ðŸ” **DiagnÃ³stico atual:**\n")
-                yield f"  - ðŸ” **DiagnÃ³stico atual:**\n"
-                await _safe_emit(__event_emitter__, f"    â€¢ timeout_synthesis (asyncio): {timeout_synthesis}s\n")
-                yield f"    â€¢ timeout_synthesis (asyncio): {timeout_synthesis}s\n"
-                await _safe_emit(__event_emitter__, f"    â€¢ request_timeout (HTTP): {effective_http_timeout}s (margem de 30s)\n")
-                yield f"    â€¢ request_timeout (HTTP): {effective_http_timeout}s (margem de 30s)\n"
-                await _safe_emit(__event_emitter__, f"    â€¢ HTTPX_READ_TIMEOUT (base): {self.valves.HTTPX_READ_TIMEOUT}s (nÃ£o usado na sÃ­ntese)\n")
-                yield f"    â€¢ HTTPX_READ_TIMEOUT (base): {self.valves.HTTPX_READ_TIMEOUT}s (nÃ£o usado na sÃ­ntese)\n"
-                await _safe_emit(__event_emitter__, f"  - âš ï¸ **Se a resposta apareceu na OpenAI mas nÃ£o aqui:** pode ser timeout de conexÃ£o HTTP. Verifique logs para '[LLM_CALL]'.\n")
-                yield f"  - âš ï¸ **Se a resposta apareceu na OpenAI mas nÃ£o aqui:** pode ser timeout de conexÃ£o HTTP. Verifique logs para '[LLM_CALL]'.\n"
+                await _safe_emit(__event_emitter__, f"  - Aumente LLM_TIMEOUT_SYNTHESIS nas valves (atual: {timeout_synthesis}s, máx: {max_timeout}s)\n")
+                yield f"  - Aumente LLM_TIMEOUT_SYNTHESIS nas valves (atual: {timeout_synthesis}s, máx: {max_timeout}s)\n"
+                await _safe_emit(__event_emitter__, f"  - 🔍 **Diagnóstico atual:**\n")
+                yield f"  - 🔍 **Diagnóstico atual:**\n"
+                await _safe_emit(__event_emitter__, f"    • timeout_synthesis (asyncio): {timeout_synthesis}s\n")
+                yield f"    • timeout_synthesis (asyncio): {timeout_synthesis}s\n"
+                await _safe_emit(__event_emitter__, f"    • request_timeout (HTTP): {effective_http_timeout}s (margem de 30s)\n")
+                yield f"    • request_timeout (HTTP): {effective_http_timeout}s (margem de 30s)\n"
+                await _safe_emit(__event_emitter__, f"    • HTTPX_READ_TIMEOUT (base): {self.valves.HTTPX_READ_TIMEOUT}s (não usado na síntese)\n")
+                yield f"    • HTTPX_READ_TIMEOUT (base): {self.valves.HTTPX_READ_TIMEOUT}s (não usado na síntese)\n"
+                await _safe_emit(__event_emitter__, f"  - ⚠️ **Se a resposta apareceu na OpenAI mas não aqui:** pode ser timeout de conexão HTTP. Verifique logs para '[LLM_CALL]'.\n")
+                yield f"  - ⚠️ **Se a resposta apareceu na OpenAI mas não aqui:** pode ser timeout de conexão HTTP. Verifique logs para '[LLM_CALL]'.\n"
                 await _safe_emit(__event_emitter__, f"  - Ou reduza MAX_DEDUP_PARAGRAPHS (atual: {self.valves.MAX_DEDUP_PARAGRAPHS}) para diminuir contexto\n")
                 yield f"  - Ou reduza MAX_DEDUP_PARAGRAPHS (atual: {self.valves.MAX_DEDUP_PARAGRAPHS}) para diminuir contexto\n"
                 await _safe_emit(__event_emitter__, f"  - Ou aumente DEDUP_SIMILARITY_THRESHOLD (atual: {self.valves.DEDUP_SIMILARITY_THRESHOLD}) para deduplicar mais agressivamente\n")
                 yield f"  - Ou aumente DEDUP_SIMILARITY_THRESHOLD (atual: {self.valves.DEDUP_SIMILARITY_THRESHOLD}) para deduplicar mais agressivamente\n"
             else:
-                await _safe_emit(__event_emitter__, f"**[ERRO]** SÃ­ntese completa falhou: {e}\n")
-                yield f"**[ERRO]** SÃ­ntese completa falhou: {e}\n"
+                await _safe_emit(__event_emitter__, f"**[ERRO]** Síntese completa falhou: {e}\n")
+                yield f"**[ERRO]** Síntese completa falhou: {e}\n"
 
-            await _safe_emit(__event_emitter__, f"**[FALLBACK]** Contexto completo ({len(raw_context):,} chars) disponÃ­vel para anÃ¡lise manual.\n")
-            yield f"**[FALLBACK]** Contexto completo ({len(raw_context):,} chars) disponÃ­vel para anÃ¡lise manual.\n"
+            await _safe_emit(__event_emitter__, f"**[FALLBACK]** Contexto completo ({len(raw_context):,} chars) disponível para análise manual.\n")
+            yield f"**[FALLBACK]** Contexto completo ({len(raw_context):,} chars) disponível para análise manual.\n"
 
     def _validate_pipeline_state(self) -> None:
-        """Valida consistÃªncia do estado interno do pipeline
+        """Valida consistência do estado interno do pipeline
 
-        Verifica e corrige inconsistÃªncias entre estado interno.
-        Chama este mÃ©todo no inÃ­cio de pipe() para prevenir estados invÃ¡lidos.
+        Verifica e corrige inconsistências entre estado interno.
+        Chama este método no início de pipe() para prevenir estados inválidos.
         """
         # Check context lock consistency
         if hasattr(self, '_context_locked') and self._context_locked and not self._detected_context:
@@ -9136,10 +9116,10 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
         return None
 
     async def _detect_unified_context(self, user_query: str, body: dict) -> Dict[str, Any]:
-        """DETECÃ‡ÃƒO UNIFICADA DE CONTEXTO - Apenas LLM
+        """DETECÇÃO UNIFICADA DE CONTEXTO - Apenas LLM
         
-        Analisa a consulta do usuÃ¡rio e histÃ³rico para determinar:
-        - Setor/indÃºstria (10+ setores)
+        Analisa a consulta do usuário e histórico para determinar:
+        - Setor/indústria (10+ setores)
         - Tipo de pesquisa
         - Perfil apropriado
         - Metadados adaptativos
@@ -9156,30 +9136,30 @@ seguida por Heidrick (18%) e Flow Executive (15%)."
             from datetime import datetime
             current_date = datetime.now().strftime("%Y-%m-%d")
             
-            detect_prompt = f"""VocÃª Ã© um consultor de estratÃ©gia sÃªnior.
-Pense passo a passo INTERNAMENTE, mas NÃƒO exponha o raciocÃ­nio.
-Retorne SOMENTE JSON vÃ¡lido no schema abaixo.
+            detect_prompt = f"""Você é um consultor de estratégia sênior.
+Pense passo a passo INTERNAMENTE, mas NÃO exponha o raciocínio.
+Retorne SOMENTE JSON válido no schema abaixo.
 
-âš ï¸ IMPORTANTE:
-- NÃƒO use markdown ou cÃ³digo fence (```json)
-- NÃƒO escreva nada fora do JSON
-- Apenas JSON vÃ¡lido conforme schema
+⚠️ IMPORTANTE:
+- NÃO use markdown ou código fence (```json)
+- NÃO escreva nada fora do JSON
+- Apenas JSON válido conforme schema
 
 CONSULTA: {user_query}
 
-CONTEXTO DO HISTÃ“RICO:
+CONTEXTO DO HISTÓRICO:
 {text_sample[:1000]}
 
 Data atual: {current_date}
 
 TAREFA:
 Analise a consulta e produza JSON com:
-- setor_principal: especÃ­fico, nÃ£o "geral"
-- tipo_pesquisa: acadÃªmica, mercado, tÃ©cnica, regulatÃ³ria, notÃ­cias
+- setor_principal: específico, não "geral"
+- tipo_pesquisa: acadêmica, mercado, técnica, regulatória, notícias
 - perfil_sugerido: company_profile|regulation_review|technical_spec|literature_review|history_review
-- key_questions: 5-10 perguntas de DECISÃƒO
+- key_questions: 5-10 perguntas de DECISÃO
 - entities_mentioned: empresas/pessoas mencionadas EXPLICITAMENTE
-- research_objectives: 3-5 objetivos especÃ­ficos
+- research_objectives: 3-5 objetivos específicos
 
 SCHEMA JSON:
 {{
@@ -9189,13 +9169,13 @@ SCHEMA JSON:
   "key_questions": ["string"],
   "entities_mentioned": [{{"canonical": "string", "aliases": ["string"]}}],
   "research_objectives": ["string"],
-  "detecÃ§Ã£o_confianca": 0.85,
+  "detecção_confianca": 0.85,
   "fonte_deteccao": "llm"
 }}"""            
             # ===== CHAMAR LLM =====
             llm = _get_llm(self.valves, model_name=getattr(self.valves, "LLM_MODEL", "gpt-4o"))
             if not llm:
-                logger.warning("[_detect_unified_context] LLM nÃ£o disponÃ­vel")
+                logger.warning("[_detect_unified_context] LLM não disponível")
                 return self._fallback_context(user_query)
             
             safe_params = get_safe_llm_params(llm.model_name, {"temperature": 0.2})
@@ -9214,7 +9194,7 @@ SCHEMA JSON:
                             'key_questions': parsed.get('key_questions', []),
                             'entities_mentioned': parsed.get('entities_mentioned', []),
                             'research_objectives': parsed.get('research_objectives', []),
-                            'detecÃ§Ã£o_confianca': parsed.get('detecÃ§Ã£o_confianca', 0.8),
+                            'detecção_confianca': parsed.get('detecção_confianca', 0.8),
                             'fonte_deteccao': 'llm'
                         }
                 except Exception as e:
@@ -9235,7 +9215,7 @@ SCHEMA JSON:
             'key_questions': [],
             'entities_mentioned': [],
             'research_objectives': [],
-            'detecÃ§Ã£o_confianca': 0.0,
+            'detecção_confianca': 0.0,
             'fonte_deteccao': 'error'
         }
 
@@ -9251,7 +9231,7 @@ SCHEMA JSON:
         keys = list(__tools__.keys())
         logger.debug("Available tools: %s", keys)
 
-        # ResoluÃ§Ã£o determinÃ­stica: nome exato > prefixo > substring
+        # Resolução determinística: nome exato > prefixo > substring
         discover_key = self._resolve_tool_deterministic(
             "discovery", keys, ["discover", "search"]
         )
@@ -9396,7 +9376,7 @@ SCHEMA JSON:
                 if getattr(self.valves, "VERBOSE_DEBUG", False):
                     print(f"[DEBUG][D_WRAPPER] Setting llm_model={self.valves.LLM_MODEL}")
 
-            # Propagar limite de pÃ¡ginas se configurado
+            # Propagar limite de páginas se configurado
             if "pages_per_slice" in supported_params:
                 pages_per_slice = getattr(self.valves, "DISCOVERY_PAGES_PER_SLICE", 2)
                 final_kwargs["pages_per_slice"] = pages_per_slice
@@ -9448,4 +9428,3 @@ SCHEMA JSON:
                 logger.error(f"[D_WRAPPER] Unexpected exception calling discovery tool: {e}")
                 return {"urls": []}
         return d_callable_wrapper, s_callable, cr_callable
-

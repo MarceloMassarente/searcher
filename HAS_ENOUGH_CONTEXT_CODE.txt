@@ -1,0 +1,14 @@
+﻿# PHASE 1: Add _calculate_local_completeness() method
+# Location: After line 4809 (after return round(score, 3) in _calculate_phase_score)
+
+    def _calculate_local_completeness(self, metrics: dict, analysis: dict, phase_context: dict) -> float:
+        """Calculate local completeness for current phase (0.0-1.0)"""
+        w1, w2, w3, w4 = 0.40, 0.30, 0.20, 0.50
+        coverage = metrics.get("coverage", 0.0)
+        facts = analysis.get("facts", [])
+        fact_quality = sum(1 for f in facts if f.get("confiança") == "alta") / max(len(facts), 1) if facts else 0.0
+        unique_domains = len(set(f.get("fonte", {}).get("dominio", "unknown") for f in facts))
+        source_diversity = min(unique_domains / 3.0, 1.0)
+        contradiction_score = metrics.get("contradiction_score", 0.0)
+        completeness = max(0.0, min(1.0, w1 * coverage + w2 * fact_quality + w3 * source_diversity - w4 * contradiction_score))
+        return completeness

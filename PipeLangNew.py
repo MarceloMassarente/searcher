@@ -8533,13 +8533,78 @@ class Pipe:
             logger.debug("Using context reducer tool: %s", context_reducer_key)
 
         # Get the callables
-        d_callable = __tools__[discover_key]["callable"]
+        d_callable_raw = __tools__[discover_key]["callable"]
         s_callable = __tools__[scrape_key]["callable"]
         cr_callable = (
             __tools__[context_reducer_key]["callable"] if context_reducer_key else None
         )
 
-        return d_callable, s_callable, cr_callable
+        # Create wrapper for discovery tool to handle extra parameters (from PipeHaystack)
+        async def d_callable_wrapper(
+            query: str,
+            must_terms: Optional[List[str]] = None,
+            avoid_terms: Optional[List[str]] = None,
+            time_hint: Optional[Dict[str, Any]] = None,
+            lang_bias: Optional[List[str]] = None,
+            geo_bias: Optional[List[str]] = None,
+            source_bias: Optional[str] = None,
+            min_domains: Optional[int] = None,
+            official_domains: Optional[List[str]] = None,
+            profile: Optional[str] = None,
+            phase_objective: Optional[str] = None,
+            **kwargs,
+        ):
+            """Wrapper to handle discovery tool parameters"""
+            # Extract time_hint parameters
+            after = None
+            before = None
+            if time_hint:
+                after = time_hint.get("after")
+                before = time_hint.get("before")
+
+            # Build final kwargs based on tool signature
+            final_kwargs = {"query": query}
+            
+            # Add optional parameters if tool supports them
+            import inspect
+            supported_params = set(inspect.signature(d_callable_raw).parameters.keys())
+            
+            if "must_terms" in supported_params and must_terms:
+                final_kwargs["must_terms"] = must_terms
+            if "avoid_terms" in supported_params and avoid_terms:
+                final_kwargs["avoid_terms"] = avoid_terms
+            if "after" in supported_params and after:
+                final_kwargs["after"] = after
+            if "before" in supported_params and before:
+                final_kwargs["before"] = before
+            if "lang_bias" in supported_params and lang_bias:
+                final_kwargs["lang_bias"] = lang_bias
+            if "geo_bias" in supported_params and geo_bias:
+                final_kwargs["geo_bias"] = geo_bias
+            if "source_bias" in supported_params and source_bias:
+                final_kwargs["source_bias"] = source_bias
+            if "min_domains" in supported_params and min_domains:
+                final_kwargs["min_domains"] = min_domains
+            if "official_domains" in supported_params and official_domains:
+                final_kwargs["official_domains"] = official_domains
+            if "profile" in supported_params and profile:
+                final_kwargs["profile"] = profile
+            if "phase_objective" in supported_params and phase_objective:
+                final_kwargs["phase_objective"] = phase_objective
+
+            # Add request timeout if supported
+            if "request_timeout" in supported_params:
+                final_kwargs["request_timeout"] = getattr(self.valves, "HTTPX_READ_TIMEOUT", 60)
+
+            # Call the actual tool
+            try:
+                result = await d_callable_raw(**final_kwargs)
+                return result
+            except Exception as e:
+                logger.error(f"[DISCOVERY] Tool call failed: {e}")
+                return {"urls": []}
+
+        return d_callable_wrapper, s_callable, cr_callable
 
     def _resolve_tool_deterministic(self, tool_type: str, available_keys: List[str], fallback_hints: List[str] = None) -> Optional[str]:
         """Resolve tool using deterministic heuristics"""
@@ -8670,8 +8735,18 @@ class Pipe:
                     d_callable, s_callable, cr_callable = self._resolve_tools(__tools__ or {})
                 except RuntimeError as e:
                     yield f"**[MULTI-AGENT]** Error: {e}\n"
-                    yield f"**[MULTI-AGENT]** Falling back to imperative mode\n"
-                    use_langgraph = False
+                    yield f"**[MULTI-AGENT]** Attempting fallback to direct imports...\n"
+                    try:
+                        # Fallback to direct imports
+                        from tool_discovery import discovery_tool
+                        from tool_content_scraperv5_production_grade_clean import scraper_tool
+                        from tool_reduce_context_from_scraper_fixed import context_reducer_tool
+                        d_callable, s_callable, cr_callable = discovery_tool, scraper_tool, context_reducer_tool
+                        yield f"**[MULTI-AGENT]** Fallback imports successful\n"
+                    except ImportError as import_e:
+                        yield f"**[MULTI-AGENT]** Import fallback failed: {import_e}\n"
+                        yield f"**[MULTI-AGENT]** Falling back to imperative mode\n"
+                        use_langgraph = False
                 else:
                     # Build Multi-Agent LangGraph workflow
                     graph = build_multi_agent_graph(self.valves, d_callable, s_callable, cr_callable, self)
